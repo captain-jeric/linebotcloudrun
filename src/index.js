@@ -26,6 +26,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || ADMIN_TOKEN || "";
 const LOG_FULL_WEBHOOK_BODY = process.env.LOG_FULL_WEBHOOK_BODY === "true";
 const MAX_LINE_TEXT_LENGTH = 4900;
 const CACHE_MAX_SIZE = 200;
+const MEMBER_CHECK_CACHE_TTL_MS = 10 * 60 * 1000;
 const BILLING_TIME_ZONE = "Asia/Bangkok";
 const SYSTEM_DEFAULT_MODE = "bilingual";
 const SYSTEM_DEFAULT_FROM_LANG = "zh";
@@ -431,6 +432,7 @@ function getTranslationPairHelpLines(locale) {
 }
 
 const translationCache = new Map();
+const memberCheckCache = new Map();
 const TRADITIONAL_CHINESE_HINT_RE =
   /[個們這裡嗎麼為與對時會說國語學體後發現讓買賣開關東廣門問間電車書長萬無風來過還點應當產業務員實認識聽見網頁電腦機構幫寫讀頭貓鳥魚馬龍雲台灣臺]/;
 
@@ -786,6 +788,7 @@ async function findConversationBinding(bindingKey) {
   }
 
   return {
+    userId: data.user_id,
     translationEnabled: data.translation_enabled !== false,
     mode: data.mode || "",
     from_lang: data.from_lang || "",
@@ -795,7 +798,7 @@ async function findConversationBinding(bindingKey) {
 }
 
 async function bindConversationToUser(bindingKey, userId) {
-  if (!bindingKey?.conversationId || !userId) return;
+  if (!bindingKey?.conversationId || !userId) return "skipped";
 
   const { error } = await supabase
     .from("conversation_users")
@@ -806,7 +809,7 @@ async function bindConversationToUser(bindingKey, userId) {
     });
 
   if (error) {
-    if (error.code === "23505") return;
+    if (error.code === "23505") return "exists";
 
     console.warn("Bind conversation user failed:", {
       error: error.message,
@@ -815,7 +818,7 @@ async function bindConversationToUser(bindingKey, userId) {
       userId,
       time: new Date().toISOString(),
     });
-    return;
+    return "failed";
   }
 
   console.log("Conversation bound to user:", {
@@ -824,6 +827,151 @@ async function bindConversationToUser(bindingKey, userId) {
     userId,
     time: new Date().toISOString(),
   });
+  return "created";
+}
+
+async function unbindConversationIfUser(bindingKey, userId, reason = "unknown", lineUserId = "") {
+  if (!bindingKey?.conversationId || !userId) return false;
+
+  const { data, error } = await supabase
+    .from("conversation_users")
+    .delete()
+    .eq("source_type", bindingKey.sourceType)
+    .eq("conversation_id", bindingKey.conversationId)
+    .eq("user_id", userId)
+    .select("id");
+
+  if (error) {
+    logError("conversation_unbind_failed", {
+      error: error.message,
+      reason,
+      sourceType: bindingKey.sourceType,
+      conversationId: bindingKey.conversationId,
+      userId,
+      time: new Date().toISOString(),
+    });
+    return false;
+  }
+
+  if ((data || []).length > 0) {
+    logInfo("conversation_unbound", {
+      reason,
+      sourceType: bindingKey.sourceType,
+      conversationId: bindingKey.conversationId,
+      userId,
+      time: new Date().toISOString(),
+    });
+    clearMemberCheckCache(bindingKey, lineUserId);
+    return true;
+  }
+
+  return false;
+}
+
+function getMemberCheckCacheKey(bindingKey, lineUserId) {
+  if (!bindingKey?.conversationId || !lineUserId) return "";
+  return `${bindingKey.sourceType}:${bindingKey.conversationId}:${lineUserId}`;
+}
+
+function clearMemberCheckCache(bindingKey, lineUserId) {
+  const cacheKey = getMemberCheckCacheKey(bindingKey, lineUserId);
+  if (cacheKey) memberCheckCache.delete(cacheKey);
+}
+
+async function isLineUserInConversation(bindingKey, lineUserId) {
+  if (!bindingKey?.conversationId || !lineUserId) return true;
+
+  const cacheKey = getMemberCheckCacheKey(bindingKey, lineUserId);
+  const cached = memberCheckCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.exists;
+
+  const sourcePath = bindingKey.sourceType === "room" ? "room" : "group";
+  const url = `https://api.line.me/v2/bot/${sourcePath}/${encodeURIComponent(bindingKey.conversationId)}/member/${encodeURIComponent(lineUserId)}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+      },
+    });
+
+    if (response.status === 200 || response.status === 404) {
+      const exists = response.status === 200;
+      memberCheckCache.set(cacheKey, {
+        exists,
+        expiresAt: Date.now() + MEMBER_CHECK_CACHE_TTL_MS,
+      });
+      return exists;
+    }
+
+    const body = await response.text();
+    logError("line_member_check_failed", {
+      status: response.status,
+      body: body.slice(0, 300),
+      sourceType: bindingKey.sourceType,
+      conversationId: bindingKey.conversationId,
+      lineUserId,
+      time: new Date().toISOString(),
+    });
+    return true;
+  } catch (error) {
+    logError("line_member_check_failed", {
+      error: error.message,
+      sourceType: bindingKey.sourceType,
+      conversationId: bindingKey.conversationId,
+      lineUserId,
+      time: new Date().toISOString(),
+    });
+    return true;
+  }
+}
+
+async function removeBindingIfUserLeftConversation(bindingKey, conversationBinding, reason) {
+  const boundLineUserId = conversationBinding?.user?.line_user_id;
+  if (!bindingKey || !conversationBinding?.userId || !boundLineUserId) return false;
+
+  const isMember = await isLineUserInConversation(bindingKey, boundLineUserId);
+  if (isMember) return false;
+
+  return unbindConversationIfUser(bindingKey, conversationBinding.userId, reason, boundLineUserId);
+}
+
+async function pushConversationText(bindingKey, text) {
+  if (!bindingKey?.conversationId || !text) return false;
+
+  try {
+    const response = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        to: bindingKey.conversationId,
+        messages: [{ type: "text", text }],
+      }),
+    });
+
+    if (response.ok) return true;
+
+    const body = await response.text();
+    logError("line_push_failed", {
+      status: response.status,
+      body: body.slice(0, 300),
+      sourceType: bindingKey.sourceType,
+      conversationId: bindingKey.conversationId,
+      time: new Date().toISOString(),
+    });
+    return false;
+  } catch (error) {
+    logError("line_push_failed", {
+      error: error.message,
+      sourceType: bindingKey.sourceType,
+      conversationId: bindingKey.conversationId,
+      time: new Date().toISOString(),
+    });
+    return false;
+  }
 }
 
 async function setConversationTranslationEnabled(bindingKey, enabled) {
@@ -2188,6 +2336,7 @@ async function handleEvent(event) {
     time: new Date().toISOString(),
   });
 
+  if (event.type === "memberLeft") return handleMemberLeftEvent(event);
   if (event.type !== "message") return null;
   if (!event.message || event.message.type !== "text") return null;
   if (!["user", "group", "room"].includes(event.source?.type)) return null;
@@ -2213,31 +2362,50 @@ async function handleEvent(event) {
   const actorUser = await findUserByLineUserId(lineUserId);
   const actorUserCheck = actorUser ? isUserUsable(actorUser) : { ok: false, reason: "not_found" };
   const bindingKey = getConversationBindingKey(event);
+  const bindingNoticeMessages = [];
 
-  if (bindingKey && actorUserCheck.ok) {
-    await bindConversationToUser(bindingKey, actorUser.id);
+  let conversationBinding = bindingKey ? await findConversationBinding(bindingKey) : null;
+  let removedStaleBinding = false;
+
+  if (bindingKey && conversationBinding && actorUser?.id !== conversationBinding.userId) {
+    removedStaleBinding = await removeBindingIfUserLeftConversation(
+      bindingKey,
+      conversationBinding,
+      "bound_user_left_conversation_check"
+    );
+    if (removedStaleBinding) conversationBinding = null;
   }
 
-  const conversationBinding = bindingKey ? await findConversationBinding(bindingKey) : null;
+  if (bindingKey && actorUserCheck.ok && !conversationBinding) {
+    const bindResult = await bindConversationToUser(bindingKey, actorUser.id);
+    if (bindResult === "created") {
+      bindingNoticeMessages.push({
+        type: "text",
+        text: buildConversationBoundText(actorUser, removedStaleBinding, getReplyLocale(actorUser)),
+      });
+      conversationBinding = await findConversationBinding(bindingKey);
+    }
+  }
+
   const conversationTranslationEnabled = conversationBinding?.translationEnabled !== false;
   const user = actorUser || conversationBinding?.user || null;
   const translationConfig = getEffectiveTranslationConfig(user, conversationBinding);
   const replyLocale = getReplyLocale(user);
 
   if (isHelpCommand(lower)) {
-    return reply(event, buildPublicHelpText(replyLocale));
+    return replyWithNotices(event, buildPublicHelpText(replyLocale), bindingNoticeMessages);
   }
 
   if (isUserIdCommand(lower)) {
-    return reply(event, buildUserIdText(lineUserId, user, replyLocale));
+    return replyWithNotices(event, buildUserIdText(lineUserId, user, replyLocale), bindingNoticeMessages);
   }
 
   if (isGroupIdCommand(lower)) {
-    return reply(event, buildGroupIdText(event, lineUserId, replyLocale));
+    return replyWithNotices(event, buildGroupIdText(event, lineUserId, replyLocale), bindingNoticeMessages);
   }
 
   if (isUsageCommand(lower)) {
-    return reply(event, buildUserUsageText(user, replyLocale));
+    return replyWithNotices(event, buildUserUsageText(user, replyLocale), bindingNoticeMessages);
   }
 
   if (!user) {
@@ -2257,7 +2425,11 @@ async function handleEvent(event) {
   }
 
   if (isStatusCommand(lower)) {
-    return reply(event, buildStatusText(event, user, { conversationTranslationEnabled, translationConfig, locale: replyLocale }));
+    return replyWithNotices(
+      event,
+      buildStatusText(event, user, { conversationTranslationEnabled, translationConfig, locale: replyLocale }),
+      bindingNoticeMessages
+    );
   }
 
   if (isSetCommand(lower)) {
@@ -2367,7 +2539,37 @@ async function handleEvent(event) {
   }
 
   await touchUser(user.id);
-  return replyMessages(event, addOriginalQuote(event, messages));
+  return replyMessages(event, [
+    ...bindingNoticeMessages,
+    ...addOriginalQuote(event, messages),
+  ]);
+}
+
+async function handleMemberLeftEvent(event) {
+  const bindingKey = getConversationBindingKey(event);
+  if (!bindingKey) return null;
+
+  const leftLineUserIds = (event.left?.members || [])
+    .map((member) => member?.userId)
+    .filter(Boolean);
+  if (leftLineUserIds.length === 0) return null;
+
+  const conversationBinding = await findConversationBinding(bindingKey);
+  const boundLineUserId = conversationBinding?.user?.line_user_id;
+  if (!conversationBinding?.userId || !boundLineUserId) return null;
+  if (!leftLineUserIds.includes(boundLineUserId)) return null;
+
+  clearMemberCheckCache(bindingKey, boundLineUserId);
+  const unbound = await unbindConversationIfUser(
+    bindingKey,
+    conversationBinding.userId,
+    "bound_user_left_conversation_event",
+    boundLineUserId
+  );
+  if (unbound) {
+    await pushConversationText(bindingKey, buildConversationUnboundText(getReplyLocale(conversationBinding.user)));
+  }
+  return null;
 }
 
 function buildNeedPermissionText(lineUserId, locale = "en") {
@@ -2629,6 +2831,35 @@ function buildQuotaExceededText(lineUserId, user, locale = "en") {
     en: ["Not enough character quota. Please contact the administrator to recharge.", `USERID: ${lineUserId}`, `Remaining: ${remaining} chars`],
     th: ["โควตาตัวอักษรไม่เพียงพอ กรุณาติดต่อผู้ดูแลเพื่อเติมโควตา", `USERID: ${lineUserId}`, `คงเหลือ: ${remaining} ตัวอักษร`],
     ja: ["文字数残量が不足しています。管理者に連絡してチャージしてください。", `USERID: ${lineUserId}`, `残り：${remaining} 文字`],
+  };
+  return (lines[locale] || lines.en).join("\n");
+}
+
+function buildConversationBoundText(user, rebound = false, locale = "en") {
+  const name = user?.name || user?.line_user_id || "";
+  const lines = {
+    zh: rebound
+      ? [`群聊扣费账号已切换为：${name}`, "之后会使用该账号的额度。"]
+      : [`当前群聊已绑定到：${name}`, "之后会使用该账号的额度。"],
+    en: rebound
+      ? [`This chat is now billed to: ${name}`, "Future translations will use this account's quota."]
+      : [`This chat has been linked to: ${name}`, "Future translations will use this account's quota."],
+    th: rebound
+      ? [`แชทนี้เปลี่ยนบัญชีที่ใช้โควตาเป็น: ${name}`, "การแปลต่อจากนี้จะใช้โควตาของบัญชีนี้"]
+      : [`แชทนี้ผูกกับบัญชี: ${name}`, "การแปลต่อจากนี้จะใช้โควตาของบัญชีนี้"],
+    ja: rebound
+      ? [`このチャットの課金アカウントを切り替えました：${name}`, "今後の翻訳はこのアカウントの残量を使用します。"]
+      : [`このチャットを次のアカウントに連携しました：${name}`, "今後の翻訳はこのアカウントの残量を使用します。"],
+  };
+  return (lines[locale] || lines.en).join("\n");
+}
+
+function buildConversationUnboundText(locale = "en") {
+  const lines = {
+    zh: ["原绑定扣费账号已离开群聊，当前群聊绑定已解除。", "请让已开通用户在群里发送一条消息，系统会重新绑定。"],
+    en: ["The linked billing account has left this chat, so the chat link was removed.", "Ask an activated user to send a message here to link it again."],
+    th: ["บัญชีที่ผูกไว้สำหรับใช้โควตาออกจากกลุ่มแล้ว จึงยกเลิกการผูกแชทนี้", "ให้ผู้ใช้ที่เปิดสิทธิ์แล้วส่งข้อความในกลุ่มเพื่อผูกใหม่"],
+    ja: ["連携中の課金アカウントがチャットから退出したため、このチャットの連携を解除しました。", "有効なユーザーがこのチャットでメッセージを送ると再連携できます。"],
   };
   return (lines[locale] || lines.en).join("\n");
 }
@@ -3212,6 +3443,13 @@ async function callTranslate(text, targetLang, sourceLang) {
 
 async function reply(event, text) {
   return replyMessages(event, [{ type: "text", text }]);
+}
+
+async function replyWithNotices(event, text, notices = []) {
+  return replyMessages(event, [
+    ...notices,
+    { type: "text", text },
+  ]);
 }
 
 function addOriginalQuote(event, messages) {
