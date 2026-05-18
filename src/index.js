@@ -2350,6 +2350,12 @@ async function handleEvent(event) {
       time: new Date().toISOString(),
     });
     if (event.source?.type === "user" || targetCommand) {
+      if (translationResult.failureReason === "same_source_and_target_language") {
+        return reply(
+          event,
+          buildSameTranslationLanguageText(sourceLang, targetCommand?.targetLang || bilingualTargetLang, replyLocale)
+        );
+      }
       return reply(event, buildTranslateFailedText(replyLocale));
     }
     return null;
@@ -2834,6 +2840,17 @@ function buildSameLanguageText(locale = "en") {
     th: "ภาษาเริ่มต้นและภาษาคู่แปลต้องไม่เหมือนกัน",
     ja: "初期言語と相互翻訳言語を同じにすることはできません。",
   }[locale] || "The default language and paired language cannot be the same.";
+}
+
+function buildSameTranslationLanguageText(sourceLang, targetLang, locale = "en") {
+  const sourceName = getLangName(sourceLang);
+  const targetName = getLangName(targetLang);
+  return {
+    zh: `不能将${sourceName}翻译成${targetName}。`,
+    en: `Cannot translate ${sourceName} into ${targetName}.`,
+    th: `ไม่สามารถแปล${sourceName}เป็น${targetName}ได้`,
+    ja: `${sourceName}を${targetName}に翻訳することはできません。`,
+  }[locale] || `Cannot translate ${sourceName} into ${targetName}.`;
 }
 
 function buildMissingTargetText(targetLang, locale = "en") {
