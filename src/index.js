@@ -88,6 +88,14 @@ function buildTranslateClientOptions() {
 
 const translateClient = new Translate(buildTranslateClientOptions());
 
+function logInfo(event, data = {}) {
+  console.log(JSON.stringify({ level: "info", event, ...data }));
+}
+
+function logError(event, data = {}) {
+  console.error(JSON.stringify({ level: "error", event, ...data }));
+}
+
 const THREE_LANGS = ["zh", "th", "my"];
 
 const LANG_NAME = {
@@ -2303,11 +2311,14 @@ async function handleEvent(event) {
       ? getBilingualTargetLang(sourceLang, { from_lang: fromLang, to_lang: toLang })
       : null;
 
-  console.log("Translating:", {
+  logInfo("translation_attempt", {
     sourceLang,
     targetLang: targetCommand?.targetLang || "",
+    resolvedTargetLang: targetCommand?.targetLang || bilingualTargetLang || "",
     mode,
     sourceType: event.source?.type,
+    groupId: event.source?.groupId || "",
+    roomId: event.source?.roomId || "",
     lineUserId,
     billingLineUserId: user.line_user_id,
     textLength: textToTranslate.length,
@@ -2315,14 +2326,29 @@ async function handleEvent(event) {
     time: new Date().toISOString(),
   });
 
-  const messages =
+  const translationResult =
     targetCommand
-      ? await buildDirectedMessages(textToTranslate, sourceLang, targetCommand.targetLang)
+      ? await buildDirectedTranslationResult(textToTranslate, sourceLang, targetCommand.targetLang)
       : mode === "trilingual"
-        ? await buildTrilingualMessages(textToTranslate, sourceLang)
-        : await buildDirectedMessages(textToTranslate, sourceLang, bilingualTargetLang);
+        ? await buildTrilingualTranslationResult(textToTranslate, sourceLang)
+        : await buildDirectedTranslationResult(textToTranslate, sourceLang, bilingualTargetLang);
+  const messages = translationResult.messages;
 
   if (messages.length === 0) {
+    logInfo("translation_empty_result", {
+      failureReason: translationResult.failureReason,
+      sourceLang,
+      targetLang: targetCommand?.targetLang || "",
+      resolvedTargetLang: targetCommand?.targetLang || bilingualTargetLang || "",
+      mode,
+      sourceType: event.source?.type,
+      groupId: event.source?.groupId || "",
+      roomId: event.source?.roomId || "",
+      lineUserId,
+      billingLineUserId: user.line_user_id,
+      textLength: textToTranslate.length,
+      time: new Date().toISOString(),
+    });
     if (event.source?.type === "user" || targetCommand) {
       return reply(event, buildTranslateFailedText(replyLocale));
     }
@@ -3011,21 +3037,48 @@ async function buildBilingualMessages(text, sourceLang, activation) {
 }
 
 async function buildDirectedMessages(text, sourceLang, targetLang) {
+  const result = await buildDirectedTranslationResult(text, sourceLang, targetLang);
+  return result.messages;
+}
+
+async function buildDirectedTranslationResult(text, sourceLang, targetLang) {
   const normalizedSource = normalizeCode(sourceLang);
   const normalizedTarget = normalizeCode(targetLang);
-  if (normalizedSource === normalizedTarget) return [];
+  if (!normalizedTarget || normalizedTarget === "und") {
+    return { messages: [], failureReason: "missing_target_language" };
+  }
+  if (normalizedSource === normalizedTarget) {
+    return { messages: [], failureReason: "same_source_and_target_language" };
+  }
 
   const translated = await callTranslate(text, normalizedTarget, normalizedSource);
-  if (!translated || translated.trim() === text) return [];
+  if (!translated) {
+    return { messages: [], failureReason: "translate_api_returned_empty" };
+  }
+  if (translated.trim() === text) {
+    return { messages: [], failureReason: "translated_text_unchanged" };
+  }
 
-  return [{ type: "text", text: buildTranslationLine(normalizedTarget, translated) }];
+  return {
+    messages: [{ type: "text", text: buildTranslationLine(normalizedTarget, translated) }],
+    failureReason: "",
+  };
 }
 
 async function buildTrilingualMessages(text, sourceLang) {
-  if (!THREE_LANGS.includes(sourceLang)) return [];
+  const result = await buildTrilingualTranslationResult(text, sourceLang);
+  return result.messages;
+}
+
+async function buildTrilingualTranslationResult(text, sourceLang) {
+  if (!THREE_LANGS.includes(sourceLang)) {
+    return { messages: [], failureReason: "unsupported_trilingual_source_language" };
+  }
 
   const targets = THREE_LANGS.filter((lang) => lang !== sourceLang);
-  if (targets.length === 0) return [];
+  if (targets.length === 0) {
+    return { messages: [], failureReason: "missing_trilingual_targets" };
+  }
 
   const results = await Promise.all(
     targets.map(async (targetLang) => ({
@@ -3052,8 +3105,10 @@ async function buildTrilingualMessages(text, sourceLang) {
     remainingLength -= line.length + (lines.length > 1 ? separator.length : 0);
   }
 
-  if (lines.length === 0) return [];
-  return [{ type: "text", text: lines.join(separator) }];
+  if (lines.length === 0) {
+    return { messages: [], failureReason: "all_trilingual_results_empty_or_unchanged" };
+  }
+  return { messages: [{ type: "text", text: lines.join(separator) }], failureReason: "" };
 }
 
 function buildTranslationPrefix(targetLang) {
@@ -3079,7 +3134,11 @@ async function detectLang(text) {
     const first = Array.isArray(detection) ? detection[0] : detection;
     return first?.language || "und";
   } catch (error) {
-    console.error("Detect language failed:", error.message);
+    logError("detect_language_failed", {
+      error: error.message,
+      textLength: text.length,
+      time: new Date().toISOString(),
+    });
     return "und";
   }
 }
@@ -3103,10 +3162,11 @@ async function callTranslate(text, targetLang, sourceLang) {
     setCache(cacheKey, result);
     return result;
   } catch (error) {
-    console.error("Translate API failed:", {
+    logError("translate_api_failed", {
       error: error.message,
       source,
       target,
+      textLength: text.length,
       time: new Date().toISOString(),
     });
     return null;
