@@ -491,6 +491,10 @@ function isUsageCommand(lower) {
   return lower === "/usage" || lower === "/用量";
 }
 
+function isUnbindCommand(lower) {
+  return lower === "/unbind" || lower === "unbind" || lower === "/解绑" || lower === "解绑" || lower === "/解除绑定" || lower === "解除绑定";
+}
+
 function isHelpCommand(lower) {
   return lower === "/help" || lower === "help" || lower === "/帮助" || lower === "帮助";
 }
@@ -862,6 +866,41 @@ async function unbindConversationIfUser(bindingKey, userId, reason = "unknown", 
       time: new Date().toISOString(),
     });
     clearMemberCheckCache(bindingKey, lineUserId);
+    return true;
+  }
+
+  return false;
+}
+
+async function unbindConversation(bindingKey, reason = "unknown") {
+  if (!bindingKey?.conversationId) return false;
+
+  const { data, error } = await supabase
+    .from("conversation_users")
+    .delete()
+    .eq("source_type", bindingKey.sourceType)
+    .eq("conversation_id", bindingKey.conversationId)
+    .select("id, user_id");
+
+  if (error) {
+    logError("conversation_unbind_failed", {
+      error: error.message,
+      reason,
+      sourceType: bindingKey.sourceType,
+      conversationId: bindingKey.conversationId,
+      time: new Date().toISOString(),
+    });
+    return false;
+  }
+
+  if ((data || []).length > 0) {
+    logInfo("conversation_unbound", {
+      reason,
+      sourceType: bindingKey.sourceType,
+      conversationId: bindingKey.conversationId,
+      userIds: (data || []).map((row) => row.user_id).filter(Boolean),
+      time: new Date().toISOString(),
+    });
     return true;
   }
 
@@ -2358,6 +2397,7 @@ async function handleEvent(event) {
   if (!text) return null;
 
   const lower = text.toLowerCase();
+  const unbindCommand = isUnbindCommand(lower);
   const targetCommand = parseTargetLangCommand(text);
   const actorUser = await findUserByLineUserId(lineUserId);
   const actorUserCheck = actorUser ? isUserUsable(actorUser) : { ok: false, reason: "not_found" };
@@ -2376,7 +2416,7 @@ async function handleEvent(event) {
     if (removedStaleBinding) conversationBinding = null;
   }
 
-  if (bindingKey && actorUserCheck.ok && !conversationBinding) {
+  if (bindingKey && actorUserCheck.ok && !conversationBinding && !unbindCommand) {
     const bindResult = await bindConversationToUser(bindingKey, actorUser.id);
     if (bindResult === "created") {
       bindingNoticeMessages.push({
@@ -2410,7 +2450,7 @@ async function handleEvent(event) {
 
   if (!user) {
     if (event.source?.type === "user") return reply(event, buildNeedPermissionText(lineUserId, replyLocale));
-    if (isStatusCommand(lower) || isSetCommand(lower) || targetCommand) {
+    if (isStatusCommand(lower) || isSetCommand(lower) || unbindCommand || targetCommand) {
       return reply(event, buildNeedPermissionText(lineUserId, replyLocale));
     }
     if (bindingKey) {
@@ -2430,6 +2470,23 @@ async function handleEvent(event) {
       buildStatusText(event, user, { conversationTranslationEnabled, translationConfig, locale: replyLocale }),
       bindingNoticeMessages
     );
+  }
+
+  if (unbindCommand) {
+    if (!bindingKey) return reply(event, buildUnbindPrivateText(replyLocale));
+    const actorLocale = getReplyLocale(actorUser);
+    if (!actorUser) return reply(event, buildNeedPermissionText(lineUserId, actorLocale));
+    if (!actorUserCheck.ok) {
+      return reply(event, buildUserRejectedText(lineUserId, actorUserCheck.reason, actorUser, actorLocale));
+    }
+    if (!conversationBinding) return reply(event, buildConversationNotBoundText(actorLocale));
+
+    const unbound = await unbindConversation(bindingKey, "user_command");
+    if (!unbound) return reply(event, buildConversationNotBoundText(actorLocale));
+
+    clearMemberCheckCache(bindingKey, conversationBinding.user?.line_user_id || "");
+    await touchUser(actorUser.id);
+    return reply(event, buildUserUnboundConversationText(actorLocale));
   }
 
   if (isSetCommand(lower)) {
@@ -2864,6 +2921,35 @@ function buildConversationUnboundText(locale = "en") {
   return (lines[locale] || lines.en).join("\n");
 }
 
+function buildUserUnboundConversationText(locale = "en") {
+  const lines = {
+    zh: ["当前群聊绑定已解除。", "之后需要已开通用户在群里发言，系统才会重新绑定并翻译。"],
+    en: ["This chat has been unlinked.", "An activated user needs to send a message here before translations can resume."],
+    th: ["ยกเลิกการผูกแชทนี้แล้ว", "หลังจากนี้ต้องให้ผู้ใช้ที่เปิดสิทธิ์แล้วส่งข้อความในกลุ่ม ระบบจึงจะผูกใหม่และแปลต่อ"],
+    ja: ["このチャットの連携を解除しました。", "翻訳を再開するには、有効なユーザーがこのチャットでメッセージを送る必要があります。"],
+  };
+  return (lines[locale] || lines.en).join("\n");
+}
+
+function buildConversationNotBoundText(locale = "en") {
+  const lines = {
+    zh: ["当前群聊还没有绑定扣费账号。", "请让已开通用户在群里发送一条消息完成绑定。"],
+    en: ["This chat is not linked to a billing account yet.", "Ask an activated user to send a message here to link it."],
+    th: ["แชทนี้ยังไม่ได้ผูกกับบัญชีที่ใช้โควตา", "ให้ผู้ใช้ที่เปิดสิทธิ์แล้วส่งข้อความในกลุ่มเพื่อผูกบัญชี"],
+    ja: ["このチャットはまだ課金アカウントに連携されていません。", "有効なユーザーがこのチャットでメッセージを送ると連携できます。"],
+  };
+  return (lines[locale] || lines.en).join("\n");
+}
+
+function buildUnbindPrivateText(locale = "en") {
+  return {
+    zh: "/unbind 只能在群聊或多人聊天室中使用。",
+    en: "/unbind can only be used in a group or multi-person chat.",
+    th: "ใช้ /unbind ได้เฉพาะในกลุ่มหรือห้องแชทหลายคนเท่านั้น",
+    ja: "/unbind はグループまたは複数人チャットでのみ使用できます。",
+  }[locale] || "/unbind can only be used in a group or multi-person chat.";
+}
+
 function buildPublicHelpText(locale = "en") {
   const builders = {
     zh: () => [
@@ -2880,6 +2966,7 @@ function buildPublicHelpText(locale = "en") {
       "set on      开启群聊自动翻译",
       "set off     关闭群聊自动翻译，需要时仍可用 /TH 等命令指定翻译",
       "set 3lang   切换为中文 / 泰文 / 缅文三语互译",
+      "/unbind    解除当前群聊绑定",
       "",
       "临时指定目标语言：",
       "例如：/TH 你好  会翻译成泰文",
@@ -2904,6 +2991,7 @@ function buildPublicHelpText(locale = "en") {
       "set on      Turn on group auto-translation",
       "set off     Turn it off; /TH and other directed commands still work",
       "set 3lang   Switch to Chinese / Thai / Burmese trilingual mode",
+      "/unbind    Unlink this chat",
       "",
       "Translate to a specific language:",
       "Example: /TH hello  translates to Thai",
@@ -2928,6 +3016,7 @@ function buildPublicHelpText(locale = "en") {
       "set on      เปิดการแปลอัตโนมัติในกลุ่ม",
       "set off     ปิดการแปลอัตโนมัติ แต่ยังใช้ /TH และคำสั่งระบุภาษาได้",
       "set 3lang   เปลี่ยนเป็นโหมดจีน / ไทย / พม่า 3 ภาษา",
+      "/unbind    ยกเลิกการผูกแชทนี้",
       "",
       "แปลเป็นภาษาที่ระบุ:",
       "ตัวอย่าง: /TH hello  จะแปลเป็นภาษาไทย",
@@ -2952,6 +3041,7 @@ function buildPublicHelpText(locale = "en") {
       "set on      グループ自動翻訳をオン",
       "set off     自動翻訳をオフ。/TH などの指定翻訳は利用できます",
       "set 3lang   中国語 / タイ語 / ミャンマー語の3言語モードに切り替え",
+      "/unbind    このチャットの連携を解除",
       "",
       "翻訳先を指定する：",
       "例：/TH こんにちは  タイ語に翻訳します",
@@ -3230,6 +3320,7 @@ function buildSetHelpText(title, locale = "en") {
       "",
       "set on       开启群聊自动翻译",
       "set off      关闭群聊自动翻译，只保留 /TH 等指定翻译",
+      "/unbind     解除当前群聊绑定",
       "",
       "/status      查看当前状态",
       "/usage       查看额度",
@@ -3249,6 +3340,7 @@ function buildSetHelpText(title, locale = "en") {
       "",
       "set on       Turn on group auto-translation",
       "set off      Turn off group auto-translation; /TH and other directed commands still work",
+      "/unbind     Unlink this chat",
       "",
       "/status      Show current status",
       "/usage       Check quota",
@@ -3268,6 +3360,7 @@ function buildSetHelpText(title, locale = "en") {
       "",
       "set on       เปิดการแปลอัตโนมัติในกลุ่ม",
       "set off      ปิดการแปลอัตโนมัติในกลุ่ม แต่ /TH และคำสั่งระบุภาษาอื่นยังใช้ได้",
+      "/unbind     ยกเลิกการผูกแชทนี้",
       "",
       "/status      ดูสถานะปัจจุบัน",
       "/usage       ตรวจสอบโควตา",
@@ -3287,6 +3380,7 @@ function buildSetHelpText(title, locale = "en") {
       "",
       "set on       グループ自動翻訳をオン",
       "set off      グループ自動翻訳をオフ。/TH などの指定翻訳は利用できます",
+      "/unbind     このチャットの連携を解除",
       "",
       "/status      現在の状態を表示",
       "/usage       残量を確認",
