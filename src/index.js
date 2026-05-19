@@ -433,6 +433,9 @@ function getTranslationPairHelpLines(locale) {
 
 const translationCache = new Map();
 const memberCheckCache = new Map();
+const THAI_POLITE_SUFFIX = "ค่ะ";
+const THAI_POLITE_END_RE = /\s*(?:ค่ะ|คะ|ครับ|คับ|นะคะ|นะครับ)\s*([.!?。！？…]*)$/u;
+const TRAILING_PUNCTUATION_RE = /([.!?。！？…]+)$/u;
 const TRADITIONAL_CHINESE_HINT_RE =
   /[個們這裡嗎麼為與對時會說國語學體後發現讓買賣開關東廣門問間電車書長萬無風來過還點應當產業務員實認識聽見網頁電腦機構幫寫讀頭貓鳥魚馬龍雲台灣臺]/;
 
@@ -703,6 +706,30 @@ function setCache(key, value) {
   }
 
   translationCache.set(key, value);
+}
+
+function addThaiPoliteSuffix(text) {
+  if (typeof text !== "string") return text;
+
+  const trailingWhitespace = text.match(/\s*$/u)?.[0] || "";
+  const body = text.slice(0, text.length - trailingWhitespace.length);
+  if (!body) return text;
+
+  const standardized = body.replace(THAI_POLITE_END_RE, `${THAI_POLITE_SUFFIX}$1`);
+  if (standardized !== body) return `${standardized}${trailingWhitespace}`;
+
+  const punctuationMatch = body.match(TRAILING_PUNCTUATION_RE);
+  if (punctuationMatch) {
+    const punctuation = punctuationMatch[0];
+    return `${body.slice(0, -punctuation.length)}${THAI_POLITE_SUFFIX}${punctuation}${trailingWhitespace}`;
+  }
+
+  return `${body}${THAI_POLITE_SUFFIX}${trailingWhitespace}`;
+}
+
+function postProcessTranslationResult(text, targetLang) {
+  if (normalizeCode(targetLang) !== "th") return text;
+  return addThaiPoliteSuffix(text);
 }
 
 async function findUserByLineUserId(lineUserId) {
@@ -3521,8 +3548,9 @@ async function callTranslate(text, targetLang, sourceLang) {
     }
 
     const [result] = await translateClient.translate(text, options);
-    setCache(cacheKey, result);
-    return result;
+    const translated = postProcessTranslationResult(result, target);
+    setCache(cacheKey, translated);
+    return translated;
   } catch (error) {
     logError("translate_api_failed", {
       error: error.message,
