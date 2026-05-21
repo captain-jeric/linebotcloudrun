@@ -2472,7 +2472,7 @@ async function handleEvent(event) {
   }
 
   if (isUsageCommand(lower)) {
-    return replyWithNotices(event, buildUserUsageText(user, replyLocale), bindingNoticeMessages);
+    return replyWithNotices(event, buildUserUsageText(user, lineUserId, replyLocale), bindingNoticeMessages);
   }
 
   if (!user) {
@@ -2656,25 +2656,29 @@ async function handleMemberLeftEvent(event) {
   return null;
 }
 
-function buildNeedPermissionText(lineUserId, locale = "en") {
-  const lines = {
-    zh: ["请联系管理员添加权限。", `USERID：${lineUserId}`],
-    en: ["Please contact the administrator to activate access.", `USERID: ${lineUserId}`],
-    th: ["กรุณาติดต่อผู้ดูแลเพื่อเปิดสิทธิ์การใช้งาน", `USERID: ${lineUserId}`],
-    ja: ["管理者に連絡して利用権限を有効にしてください。", `USERID: ${lineUserId}`],
-  };
-  return (lines[locale] || lines.en).join("\n");
+function buildNeedPermissionText(lineUserId) {
+  return buildInactiveAccountText(lineUserId);
+}
+
+function buildInactiveAccountText(lineUserId) {
+  return [
+    "您的账户尚未激活，请添加line群https://line.me/ti/g/JWu55WSem5，并发送您的名字和",
+    `userid：${lineUserId}`,
+    "联系管理员激活账户",
+    "",
+    "Your account has not been activated yet. Please join the LINE group https://line.me/ti/g/JWu55WSem5 and send your name and",
+    `userid: ${lineUserId}`,
+    "Contact the administrator to activate your account.",
+    "",
+    "บัญชีของคุณยังไม่ได้เปิดใช้งาน กรุณาเข้ากลุ่ม LINE https://line.me/ti/g/JWu55WSem5 และส่งชื่อของคุณพร้อม",
+    `userid: ${lineUserId}`,
+    "ติดต่อผู้ดูแลระบบเพื่อเปิดใช้งานบัญชี",
+  ].join("\n");
 }
 
 function buildUserIdText(lineUserId, user, locale = "en") {
   if (!user) {
-    const lines = {
-      zh: ["当前账号尚未开通权限。", "请联系管理员添加权限。", `USERID：${lineUserId}`],
-      en: ["This account is not activated yet.", "Please contact the administrator to activate access.", `USERID: ${lineUserId}`],
-      th: ["บัญชีนี้ยังไม่ได้เปิดสิทธิ์", "กรุณาติดต่อผู้ดูแลเพื่อเปิดสิทธิ์การใช้งาน", `USERID: ${lineUserId}`],
-      ja: ["このアカウントはまだ有効化されていません。", "管理者に連絡して利用権限を有効にしてください。", `USERID: ${lineUserId}`],
-    };
-    return (lines[locale] || lines.en).join("\n");
+    return buildInactiveAccountText(lineUserId);
   }
 
   const lines = {
@@ -2716,15 +2720,9 @@ function buildGroupIdText(event, lineUserId, locale = "en") {
   return (lines[locale] || lines.en).join("\n");
 }
 
-function buildUserUsageText(user, locale = "en") {
+function buildUserUsageText(user, lineUserId, locale = "en") {
   if (!user) {
-    const lines = {
-      zh: ["当前账号尚未开通权限。", "请联系管理员添加权限。", "发送 userid 查看 USERID。"],
-      en: ["This account is not activated yet.", "Please contact the administrator to activate access.", "Send userid to check your USERID."],
-      th: ["บัญชีนี้ยังไม่ได้เปิดสิทธิ์", "กรุณาติดต่อผู้ดูแลเพื่อเปิดสิทธิ์การใช้งาน", "ส่ง userid เพื่อตรวจสอบ USERID"],
-      ja: ["このアカウントはまだ有効化されていません。", "管理者に連絡して利用権限を有効にしてください。", "userid を送信すると USERID を確認できます。"],
-    };
-    return (lines[locale] || lines.en).join("\n");
+    return buildInactiveAccountText(lineUserId);
   }
 
   const remainingChars = getStoredRemainingChars(user);

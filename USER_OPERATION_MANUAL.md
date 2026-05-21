@@ -291,13 +291,23 @@ set off
 
 ### 当前账号尚未开通权限
 
-表示你的 LINE 账号还没有开通。请发送：
+表示你的 LINE 账号还没有开通。机器人会提示：
 
 ```text
-userid
+您的账户尚未激活，请添加line群https://line.me/ti/g/JWu55WSem5，并发送您的名字和
+userid：你的 USERID
+联系管理员激活账户
+
+Your account has not been activated yet. Please join the LINE group https://line.me/ti/g/JWu55WSem5 and send your name and
+userid: your USERID
+Contact the administrator to activate your account.
+
+บัญชีของคุณยังไม่ได้เปิดใช้งาน กรุณาเข้ากลุ่ม LINE https://line.me/ti/g/JWu55WSem5 และส่งชื่อของคุณพร้อม
+userid: USERID ของคุณ
+ติดต่อผู้ดูแลระบบเพื่อเปิดใช้งานบัญชี
 ```
 
-然后把机器人回复的 `USERID` 发给管理员。
+请加入提示中的 LINE 群，并发送你的名字和机器人回复的 `userid`，联系管理员激活账户。
 
 ### 账号已暂停
 
