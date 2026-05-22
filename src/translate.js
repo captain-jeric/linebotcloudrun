@@ -1,6 +1,7 @@
-const { translateClient, CACHE_MAX_SIZE, MAX_LINE_TEXT_LENGTH, THREE_LANGS } = require("./config");
+const { translateClient, CACHE_MAX_SIZE, MAX_LINE_TEXT_LENGTH } = require("./config");
 const {
   normalizeCode, toGoogleCode, getLangFlag, getLangShortLabel,
+  THREE_LANGS,
   THAI_POLITE_SUFFIX, THAI_POLITE_END_RE, TRAILING_PUNCTUATION_RE, TRADITIONAL_CHINESE_HINT_RE,
 } = require("./lang");
 const { logError } = require("./utils");
