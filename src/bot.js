@@ -1,12 +1,12 @@
 const { BOT_USER_ID } = require("./config");
-const { normalizeCode, TARGET_LANG_COMMANDS } = require("./lang");
+const { normalizeCode, TARGET_LANG_COMMANDS, isSupportedDefaultLang } = require("./lang");
 const { logInfo, countChargeableChars } = require("./utils");
 const {
   findUserByLineUserId, findConversationBinding, bindConversationToUser,
   unbindConversationIfUser, unbindConversation, setConversationTranslationEnabled,
   setConversationLanguageConfig, touchUser, chargeUserUsage,
 } = require("./db");
-const { isUserUsable, getRemainingChars, getEffectiveTranslationConfig, getBilingualTargetLang, isSupportedDefaultLang } = require("./user");
+const { isUserUsable, getRemainingChars, getEffectiveTranslationConfig, getBilingualTargetLang } = require("./user");
 const {
   buildDirectedTranslationResult, buildTrilingualTranslationResult, detectLang,
 } = require("./translate");

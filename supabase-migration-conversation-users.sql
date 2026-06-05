@@ -25,6 +25,16 @@ alter table public.conversation_users
 create index if not exists conversation_users_user_id_idx
   on public.conversation_users (user_id);
 
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
 drop trigger if exists conversation_users_set_updated_at on public.conversation_users;
 create trigger conversation_users_set_updated_at
 before update on public.conversation_users

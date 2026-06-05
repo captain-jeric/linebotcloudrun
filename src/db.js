@@ -1,9 +1,5 @@
 const { supabase } = require("./config");
 const { logInfo, logError } = require("./utils");
-const { findUserById: _findUserById } = (() => {
-  // forward ref resolved below after function definitions
-  return {};
-})();
 
 async function findUserByLineUserId(lineUserId) {
   if (!lineUserId) return null;
