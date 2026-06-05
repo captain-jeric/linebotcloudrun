@@ -1,10 +1,11 @@
 const { BILLING_TIME_ZONE } = require("./config");
 const { normalizeCode, getLangName, getLangShortLabel, ADMIN_LANGUAGE_OPTIONS } = require("./lang");
-const { escapeHtml, formatDate, formatDateInput, formatNumber, getBangkokDateString, parsePositiveInteger } = require("./utils");
+const { escapeHtml, formatDate, formatDateInput, formatNumber, getBangkokDateString, addMonthsToDateString, parsePositiveInteger } = require("./utils");
 const {
   getQuotaChars, getUsedChars, getStoredRemainingChars, isUserExpired,
   hasConversationTranslationConfig, getEffectiveTranslationConfig,
 } = require("./user");
+const { BILLING_PLANS } = require("./billing");
 
 // ── URL builders ─────────────────────────────────────────────────────────────
 
@@ -41,11 +42,36 @@ function buildAdminRedirectWithRenewUser(token, message, lineUserId) {
 
 function renderQuotaOptions(selectedValue = 100000) {
   const selected = Number(selectedValue || 0);
-  const options = [];
+  const values = new Set(BILLING_PLANS.map((plan) => plan.chars));
   for (let value = 100000; value <= 1000000; value += 100000) {
-    options.push(`<option value="${value}" ${selected === value ? "selected" : ""}>${formatNumber(value)} 字符</option>`);
+    values.add(value);
   }
-  return options.join("");
+  return [...values]
+    .sort((a, b) => a - b)
+    .map((value) => `<option value="${value}" ${selected === value ? "selected" : ""}>${formatNumber(value)} 字符</option>`)
+    .join("");
+}
+
+function renderBillingPlanOptions(selectedValue = "") {
+  const selected = String(selectedValue || "");
+  return [
+    `<option value="" ${selected ? "" : "selected"}>自定义流量</option>`,
+    ...BILLING_PLANS.map((plan) => `<option value="${plan.id}" ${selected === plan.id ? "selected" : ""}>${escapeHtml(plan.label)}</option>`),
+  ].join("");
+}
+
+function renderBillingRules() {
+  return `<section class="panel billing-panel">
+      <h2>计费规则</h2>
+      <div class="plan-grid">
+        ${BILLING_PLANS.map((plan) => `<div class="plan-card">
+          <strong>${escapeHtml(plan.priceCny.toFixed(1))} 元 / 月</strong>
+          <span>${formatNumber(plan.chars)} 字符</span>
+          <small>套餐有效期 ${plan.months} 个月</small>
+        </div>`).join("")}
+      </div>
+      <p class="meta">后台选择套餐时，会按规则写入字符数、1 个月有效期和充值记录备注；特殊调整请选“自定义流量”。</p>
+    </section>`;
 }
 
 function renderMonthOptions(selectedValue = 12, includeBlank = false) {
@@ -204,7 +230,7 @@ function renderRenewalPanel({ renewUser, renewUserId, renewUserNotFound, renewal
   const quotaChars = getQuotaChars(renewUser);
   const usedChars = getUsedChars(renewUser);
   const remainingChars = getStoredRemainingChars(renewUser);
-  const nextExpiry = require("./utils").defaultExpiryDate();
+  const nextExpiry = addMonthsToDateString(getBangkokDateString(), 1);
   const userStatus = renewUser ? (isUserExpired(renewUser) ? "已过期" : renewUser.status) : "";
 
   return `<section id="recharge" class="panel recharge-panel">
@@ -230,12 +256,13 @@ function renderRenewalPanel({ renewUser, renewUserId, renewUserNotFound, renewal
                     <input type="hidden" name="line_user_id" value="${escapeHtml(renewUser.line_user_id)}">
                     <h3>充值流量</h3>
                     <div class="renew-grid compact">
-                      <label>增加流量<select name="recharge_chars">${renderQuotaOptions(100000)}</select></label>
-                      <label>套餐时长<select name="recharge_months" data-expiry-months data-expiry-target="recharge-expiry">${renderMonthOptions(12)}</select></label>
+                      <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="recharge-chars" data-months-target="recharge-months" data-expiry-target="recharge-expiry" data-note-target="recharge-note">${renderBillingPlanOptions("monthly_29_9_100000")}</select></label>
+                      <label>增加流量<select id="recharge-chars" name="recharge_chars">${renderQuotaOptions(100000)}</select></label>
+                      <label>套餐时长<select id="recharge-months" name="recharge_months" data-expiry-months data-expiry-target="recharge-expiry">${renderMonthOptions(1)}</select></label>
                       <label>充值后有效期<input id="recharge-expiry" name="expires_at" type="date" value="${escapeHtml(nextExpiry)}"></label>
-                      <label class="wide">备注<input name="note" placeholder="收款/订单备注"></label>
+                      <label class="wide">备注<input id="recharge-note" name="note" placeholder="收款/订单备注"></label>
                     </div>
-                    <p class="meta">默认按套餐时长重新计算有效期；如填写了日期，则以填写日期为准。</p>
+                    <p class="meta">选择计费套餐时固定按 1 个月计算有效期；特殊日期或字符数请选“自定义流量”。</p>
                     <div class="form-actions recharge-actions"><button type="submit">提交充值</button></div>
                   </form>
                 </div>
@@ -296,7 +323,7 @@ function renderConversationRows(conversationBindings, token) {
 }
 
 function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, renewUserNotFound, renewalHistory, searchTerm, conversationSearchTerm, token, message, adminEmail }) {
-  const defaultExpiry = require("./utils").defaultExpiryDate();
+  const defaultExpiry = addMonthsToDateString(getBangkokDateString(), 1);
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -370,11 +397,16 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
     .meta { color: #536078; font-size: 13px; margin: 10px 0 0; }
     .message { background: #ecfdf3; border: 1px solid #abefc6; color: #067647; padding: 10px 12px; border-radius: 6px; margin-bottom: 14px; }
     .message.error { background: #fff1f0; border-color: #ffccc7; color: #a8071a; margin-top: 14px; }
+    .plan-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; }
+    .plan-card { display: grid; gap: 5px; background: #f8fafc; border: 1px solid #e8edf3; border-radius: 6px; padding: 12px; }
+    .plan-card strong { color: #172033; font-size: 17px; }
+    .plan-card span { color: #1f6feb; font-size: 14px; font-weight: 700; }
+    .plan-card small { color: #536078; font-size: 12px; }
     .history-list, .conversation-list { display: grid; gap: 8px; margin-top: 10px; }
     .history-row { display: grid; grid-template-columns: 90px 90px 130px minmax(180px, 1fr) minmax(160px, 1fr); gap: 10px; padding: 9px 10px; background: #f8fafc; border: 1px solid #e8edf3; border-radius: 6px; font-size: 13px; }
     .conversation-item { background: #fff; border: 1px solid #d9e0ea; border-radius: 8px; }
     @media (max-width: 860px) {
-      .grid, .create-grid, .edit-grid, .renew-grid, .renew-grid.compact, .lookup-form, .metric-grid, .renew-metric-row, .renew-actions, .renew-split, .inline-row, .create-actions, .history-row { grid-template-columns: 1fr; }
+      .grid, .create-grid, .edit-grid, .renew-grid, .renew-grid.compact, .lookup-form, .metric-grid, .renew-metric-row, .renew-actions, .renew-split, .inline-row, .create-actions, .history-row, .plan-grid { grid-template-columns: 1fr; }
       .wide { grid-column: span 1; }
       .list-toolbar { align-items: stretch; flex-direction: column; }
       .limit-form, .search-form { align-items: stretch; }
@@ -391,6 +423,7 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
   <header><h1>LINE 翻译机器人管理</h1><p class="meta">当前管理员：${escapeHtml(adminEmail || "unknown")} · <a href="/admin/logout">退出</a></p></header>
   <main>
     ${message ? `<div class="message">${escapeHtml(message)}</div>` : ""}
+    ${renderBillingRules()}
     <section class="panel">
       <h2>新增用户</h2>
       <form method="post" action="/admin/users">
@@ -398,16 +431,17 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
         <div class="create-grid">
           <label>USERID<input name="line_user_id" placeholder="Uxxxxxxxxxxxxxxxx" required></label>
           <label>用户名<input name="name" placeholder="后台自定义名称" required></label>
-          <label>初始流量<select name="quota_chars">${renderQuotaOptions(100000)}</select></label>
+          <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="create-quota" data-months-target="create-months" data-expiry-target="create-expiry" data-note-target="create-note">${renderBillingPlanOptions("monthly_29_9_100000")}</select></label>
+          <label>初始流量<select id="create-quota" name="quota_chars">${renderQuotaOptions(100000)}</select></label>
           <label>状态<select name="status"><option value="active">active</option><option value="paused">paused</option></select></label>
           <input type="hidden" name="mode" value="bilingual">
           <label>默认语言<select name="from_lang">${renderLanguageOptions("zh")}</select></label>
           <label>互译语言<select name="to_lang">${renderLanguageOptions("th")}</select></label>
-          <label>有效期<select name="expiry_months" data-expiry-months data-expiry-target="create-expiry">${renderMonthOptions(12)}</select></label>
+          <label>有效期<select id="create-months" name="expiry_months" data-expiry-months data-expiry-target="create-expiry">${renderMonthOptions(1)}</select></label>
           <label>有效期至<input id="create-expiry" name="expires_at" type="date" value="${escapeHtml(defaultExpiry)}"></label>
           <input type="hidden" name="used_chars" value="0">
           <div class="full inline-row create-actions">
-            <label>备注<input name="notes" placeholder="收款/套餐/客户备注"></label>
+            <label>备注<input id="create-note" name="notes" placeholder="收款/套餐/客户备注"></label>
             <button type="submit">创建用户</button>
           </div>
         </div>
@@ -439,6 +473,12 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
   </main>
   <script>
     const expiryBaseDate = "${escapeHtml(getBangkokDateString())}";
+    const billingPlans = ${JSON.stringify(BILLING_PLANS.map((plan) => ({
+      id: plan.id,
+      label: plan.label,
+      chars: plan.chars,
+      months: plan.months,
+    })))};
     function formatBangkokDate(date) {
       const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "${BILLING_TIME_ZONE}", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
       const year = parts.find((part) => part.type === "year")?.value || "";
@@ -460,6 +500,22 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
         if (!select.value) return;
         if (target) target.value = addMonthsToExpiryDate(expiryBaseDate, select.value);
       });
+    });
+    document.querySelectorAll("[data-billing-plan]").forEach((select) => {
+      const applyPlan = () => {
+        const plan = billingPlans.find((item) => item.id === select.value);
+        if (!plan) return;
+        const charsTarget = document.getElementById(select.dataset.charsTarget || "");
+        const monthsTarget = document.getElementById(select.dataset.monthsTarget || "");
+        const expiryTarget = document.getElementById(select.dataset.expiryTarget || "");
+        const noteTarget = document.getElementById(select.dataset.noteTarget || "");
+        if (charsTarget) charsTarget.value = String(plan.chars);
+        if (monthsTarget) monthsTarget.value = String(plan.months);
+        if (expiryTarget) expiryTarget.value = addMonthsToExpiryDate(expiryBaseDate, plan.months);
+        if (noteTarget && !noteTarget.value.trim()) noteTarget.value = plan.label;
+      };
+      select.addEventListener("change", applyPlan);
+      applyPlan();
     });
     document.querySelectorAll('input[type="date"]').forEach((input) => {
       const openPicker = () => { if (typeof input.showPicker === "function") input.showPicker(); };
@@ -484,6 +540,8 @@ module.exports = {
   buildAdminRedirectWithOptions,
   buildAdminRedirectWithRenewUser,
   renderQuotaOptions,
+  renderBillingPlanOptions,
+  renderBillingRules,
   renderMonthOptions,
   renderLanguageOptions,
   renderOptionalLanguageOptions,

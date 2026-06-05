@@ -20,6 +20,7 @@ const {
 const { handleEvent } = require("./bot");
 const { translationCache } = require("./translate");
 const { ADMIN_SESSION_COOKIE, ADMIN_OAUTH_STATE_COOKIE } = require("./config");
+const { applyBillingPlanToBody, buildBillingPlanNote } = require("./billing");
 
 const app = express();
 
@@ -128,7 +129,8 @@ app.get("/admin", requireAdmin, async (req, res) => {
 
 app.post("/admin/users", requireAdmin, async (req, res) => {
   const token = adminTokenFromRequest(req);
-  const input = normalizeUserInput(req.body);
+  const { body: billingBody, plan: billingPlan } = applyBillingPlanToBody(req.body, "quota_chars", "expiry_months");
+  const input = normalizeUserInput(billingBody);
   const validationError = validateUserInput(input);
   if (validationError) { res.redirect(buildAdminRedirect(token, validationError)); return; }
 
@@ -141,7 +143,7 @@ app.post("/admin/users", requireAdmin, async (req, res) => {
   const { error: renewalError } = await supabase.from("user_renewals").insert({
     user_id: user.id, type: "purchase", chars_delta: input.quota_chars,
     expires_at_before: null, expires_at_after: input.expires_at,
-    note: input.notes || `初始购买 ${input.quota_chars} 字符，有效期 1 年`,
+    note: input.notes || buildBillingPlanNote(billingPlan) || `初始购买 ${input.quota_chars} 字符，有效期 1 年`,
   });
   if (renewalError) console.warn("Record purchase failed:", renewalError.message);
   res.redirect(buildAdminRedirect(token, "用户已创建。"));
@@ -169,9 +171,10 @@ app.post("/admin/users/:id", requireAdmin, async (req, res) => {
 
 app.post("/admin/users/:id/recharge", requireAdmin, async (req, res) => {
   const token = adminTokenFromRequest(req);
-  const lineUserId = String(req.body.line_user_id || "").trim();
-  const rechargeChars = parseNonNegativeInteger(req.body.recharge_chars);
-  const note = String(req.body.note || "").trim();
+  const { body: billingBody, plan: billingPlan } = applyBillingPlanToBody(req.body, "recharge_chars", "recharge_months");
+  const lineUserId = String(billingBody.line_user_id || "").trim();
+  const rechargeChars = parseNonNegativeInteger(billingBody.recharge_chars);
+  const note = String(billingBody.note || "").trim();
 
   if (rechargeChars <= 0) { res.redirect(buildAdminRedirectWithRenewUser(token, "充值流量必须大于 0。", lineUserId)); return; }
 
@@ -181,7 +184,7 @@ app.post("/admin/users/:id/recharge", requireAdmin, async (req, res) => {
     return;
   }
 
-  const nextExpiryDate = resolveExpiryDateFromDuration({ expiry_months: req.body.recharge_months, expires_at: req.body.expires_at }, 12);
+  const nextExpiryDate = resolveExpiryDateFromDuration({ expiry_months: billingBody.recharge_months, expires_at: billingBody.expires_at }, 12);
   if (Number.isNaN(new Date(normalizeExpiryDate(nextExpiryDate)).getTime())) {
     res.redirect(buildAdminRedirectWithRenewUser(token, "充值后有效期格式不正确。", lineUserId));
     return;
@@ -200,7 +203,7 @@ app.post("/admin/users/:id/recharge", requireAdmin, async (req, res) => {
   const { error: renewalError } = await supabase.from("user_renewals").insert({
     user_id: user.id, type: "recharge", chars_delta: rechargeChars,
     expires_at_before: rechargeResult.expires_at_before, expires_at_after: rechargeResult.expires_at,
-    note: note || `流量充值 ${rechargeChars} 字符，有效期设置为 ${nextExpiryDate}`,
+    note: note || buildBillingPlanNote(billingPlan) || `流量充值 ${rechargeChars} 字符，有效期设置为 ${nextExpiryDate}`,
   });
   if (renewalError) console.warn("Record recharge failed:", renewalError.message);
   res.redirect(buildAdminRedirectWithRenewUser(token, "流量充值已完成。", user.line_user_id));
