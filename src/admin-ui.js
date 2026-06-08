@@ -49,7 +49,7 @@ function buildAdminRedirectWithQuickUser(token, message, lineUserId) {
 
 // ── select renderers ──────────────────────────────────────────────────────────
 
-function renderQuotaOptions(selectedValue = 100000) {
+function renderQuotaOptions(selectedValue = 20000) {
   const selected = Number(selectedValue || 0);
   const values = new Set(BILLING_PLANS.map((plan) => plan.chars));
   for (let value = 100000; value <= 1000000; value += 100000) {
@@ -265,8 +265,8 @@ function renderRenewalPanel({ renewUser, renewUserId, renewUserNotFound, renewal
                     <input type="hidden" name="line_user_id" value="${escapeHtml(renewUser.line_user_id)}">
                     <h3>充值流量</h3>
                     <div class="renew-grid compact">
-                      <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="recharge-chars" data-months-target="recharge-months" data-expiry-target="recharge-expiry" data-note-target="recharge-note">${renderBillingPlanOptions("monthly_29_9_100000")}</select></label>
-                      <label>增加流量<select id="recharge-chars" name="recharge_chars">${renderQuotaOptions(100000)}</select></label>
+                      <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="recharge-chars" data-months-target="recharge-months" data-expiry-target="recharge-expiry" data-note-target="recharge-note">${renderBillingPlanOptions("monthly_9_9_20000")}</select></label>
+                      <label>增加流量<select id="recharge-chars" name="recharge_chars">${renderQuotaOptions(20000)}</select></label>
                       <label>套餐时长<select id="recharge-months" name="recharge_months" data-expiry-months data-expiry-target="recharge-expiry">${renderMonthOptions(1)}</select></label>
                       <label>充值后有效期<input id="recharge-expiry" name="expires_at" type="date" value="${escapeHtml(nextExpiry)}"></label>
                       <label class="wide">备注<input id="recharge-note" name="note" placeholder="收款/订单备注"></label>
@@ -310,8 +310,8 @@ function renderQuickManagePanel({ quickUser, quickUserId, quickUserNotFound, tok
             <input type="hidden" name="line_user_id" value="${escapeHtml(quickUser.line_user_id)}">
             <input type="hidden" name="quick_userid" value="${escapeHtml(quickUser.line_user_id)}">
             <div class="quick-grid">
-              <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="quick-recharge-chars" data-months-target="quick-recharge-months" data-expiry-target="quick-recharge-expiry" data-note-target="quick-recharge-note">${renderBillingPlanOptions("monthly_29_9_100000")}</select></label>
-              <label>增加流量<select id="quick-recharge-chars" name="recharge_chars">${renderQuotaOptions(100000)}</select></label>
+              <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="quick-recharge-chars" data-months-target="quick-recharge-months" data-expiry-target="quick-recharge-expiry" data-note-target="quick-recharge-note">${renderBillingPlanOptions("monthly_9_9_20000")}</select></label>
+              <label>增加流量<select id="quick-recharge-chars" name="recharge_chars">${renderQuotaOptions(20000)}</select></label>
               <label>有效期<select id="quick-recharge-months" name="recharge_months" data-expiry-months data-expiry-target="quick-recharge-expiry">${renderMonthOptions(1)}</select></label>
               <label>有效期至<input id="quick-recharge-expiry" name="expires_at" type="date" value="${escapeHtml(defaultExpiry)}"></label>
               <label class="wide">备注<input id="quick-recharge-note" name="note" placeholder="收款/订单备注"></label>
@@ -327,8 +327,8 @@ function renderQuickManagePanel({ quickUser, quickUserId, quickUserNotFound, tok
             <div class="quick-grid">
               <label>USERID<input name="line_user_id" value="${escapeHtml(quickUserId)}" required></label>
               <label>用户名<input name="name" placeholder="后台自定义名称" required></label>
-              <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="quick-create-quota" data-months-target="quick-create-months" data-expiry-target="quick-create-expiry" data-note-target="quick-create-note">${renderBillingPlanOptions("monthly_29_9_100000")}</select></label>
-              <label>初始流量<select id="quick-create-quota" name="quota_chars">${renderQuotaOptions(100000)}</select></label>
+              <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="quick-create-quota" data-months-target="quick-create-months" data-expiry-target="quick-create-expiry" data-note-target="quick-create-note">${renderBillingPlanOptions("monthly_9_9_20000")}</select></label>
+              <label>初始流量<select id="quick-create-quota" name="quota_chars">${renderQuotaOptions(20000)}</select></label>
               <label>有效期<select id="quick-create-months" name="expiry_months" data-expiry-months data-expiry-target="quick-create-expiry">${renderMonthOptions(1)}</select></label>
               <label>有效期至<input id="quick-create-expiry" name="expires_at" type="date" value="${escapeHtml(defaultExpiry)}"></label>
               <input type="hidden" name="status" value="active">
@@ -456,9 +456,17 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
     .renew-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
     .renew-card { min-height: 100%; border: 1px solid #e8edf3; border-radius: 8px; padding: 14px; background: #fbfcfe; box-sizing: border-box; }
     .renew-card h3 { margin: 0 0 12px; font-size: 16px; }
-    .quick-body { border-top: 1px solid #e8edf3; margin-top: 14px; padding-top: 14px; display: grid; gap: 14px; }
-    .quick-grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px 14px; align-items: start; }
-    .quick-form { background: #fbfcfe; border: 1px solid #e8edf3; border-radius: 8px; padding: 14px; }
+    .quick-panel { padding: 12px; }
+    .quick-panel h2 { margin: 0 0 10px; }
+    .quick-panel .lookup-form { grid-template-columns: minmax(260px, 420px) auto; }
+    .quick-body { border-top: 1px solid #e8edf3; margin-top: 10px; padding-top: 10px; display: grid; gap: 10px; }
+    .quick-body .renew-metrics { gap: 6px; }
+    .quick-body .renew-metric-row { gap: 6px; }
+    .quick-body .metric { min-height: 32px; padding: 6px 8px; }
+    .quick-body .metric b { font-size: 11px; }
+    .quick-body .metric span { font-size: 13px; margin-top: 2px; }
+    .quick-grid { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 8px 10px; align-items: end; }
+    .quick-form { background: #fbfcfe; border: 1px solid #e8edf3; border-radius: 8px; padding: 10px; }
     .quick-actions { align-self: end; margin-top: 0; }
     .list-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-top: 24px; flex-wrap: wrap; }
     .list-toolbar h2 { margin: 0; }
@@ -492,6 +500,26 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
       summary { align-items: flex-start; flex-direction: column; }
       .summary-stats { justify-content: flex-start; }
       main { padding: 14px; }
+      #quick-manage { padding: 10px; }
+      #quick-manage h2 { font-size: 16px; margin-bottom: 8px; }
+      #quick-manage label { gap: 4px; font-size: 12px; }
+      #quick-manage input, #quick-manage select, #quick-manage button { height: 34px; font-size: 13px; padding-top: 6px; padding-bottom: 6px; }
+      #quick-manage .lookup-form { grid-template-columns: minmax(0, 1fr) 76px; gap: 8px; align-items: end; }
+      #quick-manage .lookup-form button { width: 76px; min-width: 76px; padding-left: 8px; padding-right: 8px; }
+      #quick-manage .quick-body { margin-top: 8px; padding-top: 8px; gap: 8px; }
+      #quick-manage .renew-metrics { gap: 5px; }
+      #quick-manage .renew-metric-row:not(.single) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+      #quick-manage .renew-metric-row.single { grid-template-columns: 1fr; }
+      #quick-manage .metric { min-height: 28px; padding: 5px 7px; }
+      #quick-manage .metric b { font-size: 10px; }
+      #quick-manage .metric span { font-size: 12px; margin-top: 1px; }
+      #quick-manage .inline-metric { min-height: 28px; }
+      #quick-manage .quick-form { padding: 8px; }
+      #quick-manage .quick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 8px; }
+      #quick-manage .wide, #quick-manage .quick-actions { grid-column: 1 / -1; }
+      #quick-manage .quick-actions button { width: 100%; min-width: 0; }
+      #quick-manage .meta { margin-top: 6px; font-size: 12px; }
+      #quick-manage .message { padding: 8px 9px; margin-bottom: 8px; font-size: 12px; }
     }
   </style>
 </head>
@@ -508,8 +536,8 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
         <div class="create-grid">
           <label>USERID<input name="line_user_id" placeholder="Uxxxxxxxxxxxxxxxx" required></label>
           <label>用户名<input name="name" placeholder="后台自定义名称" required></label>
-          <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="create-quota" data-months-target="create-months" data-expiry-target="create-expiry" data-note-target="create-note">${renderBillingPlanOptions("monthly_29_9_100000")}</select></label>
-          <label>初始流量<select id="create-quota" name="quota_chars">${renderQuotaOptions(100000)}</select></label>
+          <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="create-quota" data-months-target="create-months" data-expiry-target="create-expiry" data-note-target="create-note">${renderBillingPlanOptions("monthly_9_9_20000")}</select></label>
+          <label>初始流量<select id="create-quota" name="quota_chars">${renderQuotaOptions(20000)}</select></label>
           <label>状态<select name="status"><option value="active">active</option><option value="paused">paused</option></select></label>
           <input type="hidden" name="mode" value="bilingual">
           <label>默认语言<select name="from_lang">${renderLanguageOptions("zh")}</select></label>
