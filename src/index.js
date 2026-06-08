@@ -15,7 +15,8 @@ const {
 const { ADMIN_ALLOWED_EMAILS } = require("./config");
 const {
   renderAdminPage, renderAdminLogin, buildAdminRedirect,
-  buildAdminRedirectWithOptions, buildAdminRedirectWithRenewUser, redactWebhookBody,
+  buildAdminRedirectWithOptions, buildAdminRedirectWithRenewUser, buildAdminRedirectWithQuickUser,
+  renderQuickManagePanel, redactWebhookBody,
 } = require("./admin-ui");
 const { handleEvent } = require("./bot");
 const { translationCache } = require("./translate");
@@ -23,6 +24,18 @@ const { ADMIN_SESSION_COOKIE, ADMIN_OAUTH_STATE_COOKIE } = require("./config");
 const { applyBillingPlanToBody, buildBillingPlanNote } = require("./billing");
 
 const app = express();
+
+function wantsQuickManageJson(req) {
+  return req.get("x-quick-manage") === "true" || String(req.get("accept") || "").includes("application/json");
+}
+
+function sendQuickManageResult(req, res, { ok, message, lineUserId = "" }) {
+  if (wantsQuickManageJson(req)) {
+    res.status(ok ? 200 : 400).json({ ok, message, lineUserId });
+    return true;
+  }
+  return false;
+}
 
 // ── health check ──────────────────────────────────────────────────────────────
 
@@ -112,9 +125,39 @@ app.get("/admin/logout", (_req, res) => {
 
 // ── admin pages ───────────────────────────────────────────────────────────────
 
+app.get("/admin/quick", requireAdmin, async (req, res) => {
+  try {
+    const quickUserId = String(req.query.quick_userid || "").trim();
+    const quickUser = quickUserId ? await findUserByLineUserId(quickUserId) : null;
+    res.status(200).send(renderQuickManagePanel({
+      quickUser,
+      quickUserId,
+      quickUserNotFound: Boolean(quickUserId && !quickUser),
+      token: adminTokenFromRequest(req),
+      quickMessage: req.query.message || "",
+      quickMessageType: req.query.message_type || "success",
+    }));
+  } catch (error) {
+    console.error("Load quick admin panel failed:", error);
+    res.status(500).send(renderQuickManagePanel({
+      quickUser: null,
+      quickUserId: String(req.query.quick_userid || "").trim(),
+      quickUserNotFound: false,
+      token: adminTokenFromRequest(req),
+      quickMessage: "快速管理加载失败，请查看服务日志。",
+      quickMessageType: "error",
+    }));
+  }
+});
+
 app.get("/admin", requireAdmin, async (req, res) => {
   try {
-    const data = await loadAdminData(req.query.renew_userid || "", req.query.search || "", req.query.conversation_search || "");
+    const data = await loadAdminData(
+      req.query.renew_userid || "",
+      req.query.search || "",
+      req.query.conversation_search || "",
+      req.query.quick_userid || ""
+    );
     res.status(200).send(renderAdminPage({
       ...data,
       token: adminTokenFromRequest(req),
@@ -129,15 +172,21 @@ app.get("/admin", requireAdmin, async (req, res) => {
 
 app.post("/admin/users", requireAdmin, async (req, res) => {
   const token = adminTokenFromRequest(req);
+  const quickUserId = String(req.body.quick_userid || "").trim();
   const { body: billingBody, plan: billingPlan } = applyBillingPlanToBody(req.body, "quota_chars", "expiry_months");
   const input = normalizeUserInput(billingBody);
   const validationError = validateUserInput(input);
-  if (validationError) { res.redirect(buildAdminRedirect(token, validationError)); return; }
+  if (validationError) {
+    if (sendQuickManageResult(req, res, { ok: false, message: validationError, lineUserId: quickUserId || input.line_user_id })) return;
+    res.redirect(quickUserId ? buildAdminRedirectWithQuickUser(token, validationError, quickUserId) : buildAdminRedirect(token, validationError));
+    return;
+  }
 
   const { data: user, error } = await supabase.from("users").insert(input).select("id, expires_at").single();
   if (error) {
     console.error("Create user failed:", error);
-    res.redirect(buildAdminRedirect(token, `创建失败：${error.message}`));
+    if (sendQuickManageResult(req, res, { ok: false, message: `创建失败：${error.message}`, lineUserId: quickUserId || input.line_user_id })) return;
+    res.redirect(quickUserId ? buildAdminRedirectWithQuickUser(token, `创建失败：${error.message}`, quickUserId) : buildAdminRedirect(token, `创建失败：${error.message}`));
     return;
   }
   const { error: renewalError } = await supabase.from("user_renewals").insert({
@@ -146,7 +195,8 @@ app.post("/admin/users", requireAdmin, async (req, res) => {
     note: input.notes || buildBillingPlanNote(billingPlan) || `初始购买 ${input.quota_chars} 字符，有效期 1 年`,
   });
   if (renewalError) console.warn("Record purchase failed:", renewalError.message);
-  res.redirect(buildAdminRedirect(token, "用户已创建。"));
+  if (sendQuickManageResult(req, res, { ok: true, message: "用户已创建。", lineUserId: input.line_user_id })) return;
+  res.redirect(quickUserId ? buildAdminRedirectWithQuickUser(token, "用户已创建。", input.line_user_id) : buildAdminRedirect(token, "用户已创建。"));
 });
 
 app.post("/admin/users/:id", requireAdmin, async (req, res) => {
@@ -173,20 +223,31 @@ app.post("/admin/users/:id/recharge", requireAdmin, async (req, res) => {
   const token = adminTokenFromRequest(req);
   const { body: billingBody, plan: billingPlan } = applyBillingPlanToBody(req.body, "recharge_chars", "recharge_months");
   const lineUserId = String(billingBody.line_user_id || "").trim();
+  const quickUserId = String(billingBody.quick_userid || "").trim();
   const rechargeChars = parseNonNegativeInteger(billingBody.recharge_chars);
   const note = String(billingBody.note || "").trim();
+  const buildRechargeRedirect = (message, targetLineUserId = lineUserId) =>
+    quickUserId
+      ? buildAdminRedirectWithQuickUser(token, message, targetLineUserId || quickUserId)
+      : buildAdminRedirectWithRenewUser(token, message, targetLineUserId);
 
-  if (rechargeChars <= 0) { res.redirect(buildAdminRedirectWithRenewUser(token, "充值流量必须大于 0。", lineUserId)); return; }
+  if (rechargeChars <= 0) {
+    if (sendQuickManageResult(req, res, { ok: false, message: "充值流量必须大于 0。", lineUserId: quickUserId || lineUserId })) return;
+    res.redirect(buildRechargeRedirect("充值流量必须大于 0。"));
+    return;
+  }
 
   const { data: user, error: loadError } = await supabase.from("users").select("id, line_user_id").eq("id", req.params.id).single();
   if (loadError || !user) {
-    res.redirect(buildAdminRedirectWithRenewUser(token, `充值失败：${loadError?.message || "找不到该用户"}`, lineUserId));
+    if (sendQuickManageResult(req, res, { ok: false, message: `充值失败：${loadError?.message || "找不到该用户"}`, lineUserId: quickUserId || lineUserId })) return;
+    res.redirect(buildRechargeRedirect(`充值失败：${loadError?.message || "找不到该用户"}`));
     return;
   }
 
   const nextExpiryDate = resolveExpiryDateFromDuration({ expiry_months: billingBody.recharge_months, expires_at: billingBody.expires_at }, 12);
   if (Number.isNaN(new Date(normalizeExpiryDate(nextExpiryDate)).getTime())) {
-    res.redirect(buildAdminRedirectWithRenewUser(token, "充值后有效期格式不正确。", lineUserId));
+    if (sendQuickManageResult(req, res, { ok: false, message: "充值后有效期格式不正确。", lineUserId: user.line_user_id })) return;
+    res.redirect(buildRechargeRedirect("充值后有效期格式不正确。", user.line_user_id));
     return;
   }
 
@@ -196,7 +257,8 @@ app.post("/admin/users/:id/recharge", requireAdmin, async (req, res) => {
   const rechargeResult = Array.isArray(rechargeData) ? rechargeData[0] : null;
   if (updateError || !rechargeResult) {
     console.error("Recharge user failed:", updateError);
-    res.redirect(buildAdminRedirectWithRenewUser(token, `充值失败：${updateError?.message || "更新用户失败"}`, user.line_user_id));
+    if (sendQuickManageResult(req, res, { ok: false, message: `充值失败：${updateError?.message || "更新用户失败"}`, lineUserId: user.line_user_id })) return;
+    res.redirect(buildRechargeRedirect(`充值失败：${updateError?.message || "更新用户失败"}`, user.line_user_id));
     return;
   }
 
@@ -206,7 +268,8 @@ app.post("/admin/users/:id/recharge", requireAdmin, async (req, res) => {
     note: note || buildBillingPlanNote(billingPlan) || `流量充值 ${rechargeChars} 字符，有效期设置为 ${nextExpiryDate}`,
   });
   if (renewalError) console.warn("Record recharge failed:", renewalError.message);
-  res.redirect(buildAdminRedirectWithRenewUser(token, "流量充值已完成。", user.line_user_id));
+  if (sendQuickManageResult(req, res, { ok: true, message: "流量充值已完成。", lineUserId: user.line_user_id })) return;
+  res.redirect(buildRechargeRedirect("流量充值已完成。", user.line_user_id));
 });
 
 app.post("/admin/conversations/:id", requireAdmin, async (req, res) => {

@@ -259,8 +259,9 @@ async function loadRenewalHistory(userId, limit = 10) {
   return data || [];
 }
 
-async function loadAdminData(renewUserId = "", search = "", conversationSearch = "") {
+async function loadAdminData(renewUserId = "", search = "", conversationSearch = "", quickUserId = "") {
   const trimmedRenewUserId = String(renewUserId || "").trim();
+  const trimmedQuickUserId = String(quickUserId || "").trim();
   const safeLimit = 20;
   const searchTerm = sanitizeAdminSearchTerm(search);
   const conversationSearchTerm = sanitizeAdminSearchTerm(conversationSearch);
@@ -274,11 +275,18 @@ async function loadAdminData(renewUserId = "", search = "", conversationSearch =
       supabase.from("users").select("*").eq("line_user_id", trimmedRenewUserId).maybeSingle()
     );
   }
+  if (trimmedQuickUserId) {
+    queries.push(
+      supabase.from("users").select("*").eq("line_user_id", trimmedQuickUserId).maybeSingle()
+    );
+  }
   const results = await Promise.all(queries);
   const [{ data: users, error: usersError }, conversationBindings] = results;
-  const renewResult = results[2];
+  const renewResult = trimmedRenewUserId ? results[2] : null;
+  const quickResult = trimmedQuickUserId ? results[trimmedRenewUserId ? 3 : 2] : null;
   if (usersError) throw usersError;
   if (renewResult?.error) throw renewResult.error;
+  if (quickResult?.error) throw quickResult.error;
   const renewalHistory = await loadRenewalHistory(renewResult?.data?.id);
   return {
     users: users || [],
@@ -287,6 +295,9 @@ async function loadAdminData(renewUserId = "", search = "", conversationSearch =
     renewalHistory,
     renewUserId: trimmedRenewUserId,
     renewUserNotFound: Boolean(trimmedRenewUserId && !renewResult?.data),
+    quickUser: quickResult?.data || null,
+    quickUserId: trimmedQuickUserId,
+    quickUserNotFound: Boolean(trimmedQuickUserId && !quickResult?.data),
     searchTerm,
     conversationSearchTerm,
   };

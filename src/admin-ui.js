@@ -38,6 +38,15 @@ function buildAdminRedirectWithRenewUser(token, message, lineUserId) {
   return `${query ? `/admin?${query}` : "/admin"}#recharge`;
 }
 
+function buildAdminRedirectWithQuickUser(token, message, lineUserId) {
+  const params = new URLSearchParams();
+  if (token) params.set("token", token);
+  if (message) params.set("message", message);
+  if (lineUserId) params.set("quick_userid", lineUserId);
+  const query = params.toString();
+  return `${query ? `/admin?${query}` : "/admin"}#quick-manage`;
+}
+
 // ── select renderers ──────────────────────────────────────────────────────────
 
 function renderQuotaOptions(selectedValue = 100000) {
@@ -273,6 +282,69 @@ function renderRenewalPanel({ renewUser, renewUserId, renewUserNotFound, renewal
     </section>`;
 }
 
+function renderQuickManagePanel({ quickUser, quickUserId, quickUserNotFound, token, quickMessage = "", quickMessageType = "success" }) {
+  const defaultExpiry = addMonthsToDateString(getBangkokDateString(), 1);
+  const quotaChars = getQuotaChars(quickUser);
+  const usedChars = getUsedChars(quickUser);
+  const remainingChars = getStoredRemainingChars(quickUser);
+  const userStatus = quickUser ? (isUserExpired(quickUser) ? "已过期" : quickUser.status) : "";
+  const messageClass = quickMessageType === "error" ? "message error" : "message";
+
+  return `<section id="quick-manage" class="panel quick-panel">
+      <h2>快速管理</h2>
+      ${quickMessage ? `<div class="${messageClass}">${escapeHtml(quickMessage)}</div>` : ""}
+      <form method="get" action="/admin#quick-manage" class="lookup-form">
+        <input type="hidden" name="token" value="${escapeHtml(token)}">
+        <label>USERID<input name="quick_userid" value="${escapeHtml(quickUserId || "")}" placeholder="输入 USERID 后确认" required></label>
+        <button type="submit">确定</button>
+      </form>
+      ${quickUserId && quickUser ? `<div class="quick-body">
+          <div class="renew-metrics">
+            <div class="renew-metric-row single">${renderInlineMetric("USERID", quickUser.line_user_id)}</div>
+            <div class="renew-metric-row">${renderReadonlyMetric("用户名", quickUser.name)}${renderReadonlyMetric("状态", userStatus)}</div>
+            <div class="renew-metric-row">${renderReadonlyMetric("总购买字符", `${formatNumber(quotaChars)} 字符`)}${renderReadonlyMetric("剩余字符", `${formatNumber(remainingChars)} 字符`)}</div>
+            <div class="renew-metric-row">${renderReadonlyMetric("已用字符", `${formatNumber(usedChars)} 字符`)}${renderReadonlyMetric("有效期至", formatDate(quickUser.expires_at))}</div>
+          </div>
+          <form method="post" action="/admin/users/${escapeHtml(quickUser.id)}/recharge" class="quick-form">
+            <input type="hidden" name="token" value="${escapeHtml(token)}">
+            <input type="hidden" name="line_user_id" value="${escapeHtml(quickUser.line_user_id)}">
+            <input type="hidden" name="quick_userid" value="${escapeHtml(quickUser.line_user_id)}">
+            <div class="quick-grid">
+              <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="quick-recharge-chars" data-months-target="quick-recharge-months" data-expiry-target="quick-recharge-expiry" data-note-target="quick-recharge-note">${renderBillingPlanOptions("monthly_29_9_100000")}</select></label>
+              <label>增加流量<select id="quick-recharge-chars" name="recharge_chars">${renderQuotaOptions(100000)}</select></label>
+              <label>有效期<select id="quick-recharge-months" name="recharge_months" data-expiry-months data-expiry-target="quick-recharge-expiry">${renderMonthOptions(1)}</select></label>
+              <label>有效期至<input id="quick-recharge-expiry" name="expires_at" type="date" value="${escapeHtml(defaultExpiry)}"></label>
+              <label class="wide">备注<input id="quick-recharge-note" name="note" placeholder="收款/订单备注"></label>
+              <div class="form-actions quick-actions"><button type="submit">提交充值</button></div>
+            </div>
+          </form>
+        </div>` : ""}
+      ${quickUserId && quickUserNotFound ? `<div class="quick-body">
+          <p class="meta">该 USERID 不存在，请填写用户名、套餐和有效期后新增用户。</p>
+          <form method="post" action="/admin/users" class="quick-form">
+            <input type="hidden" name="token" value="${escapeHtml(token)}">
+            <input type="hidden" name="quick_userid" value="${escapeHtml(quickUserId)}">
+            <div class="quick-grid">
+              <label>USERID<input name="line_user_id" value="${escapeHtml(quickUserId)}" required></label>
+              <label>用户名<input name="name" placeholder="后台自定义名称" required></label>
+              <label>计费套餐<select name="billing_plan" data-billing-plan data-chars-target="quick-create-quota" data-months-target="quick-create-months" data-expiry-target="quick-create-expiry" data-note-target="quick-create-note">${renderBillingPlanOptions("monthly_29_9_100000")}</select></label>
+              <label>初始流量<select id="quick-create-quota" name="quota_chars">${renderQuotaOptions(100000)}</select></label>
+              <label>有效期<select id="quick-create-months" name="expiry_months" data-expiry-months data-expiry-target="quick-create-expiry">${renderMonthOptions(1)}</select></label>
+              <label>有效期至<input id="quick-create-expiry" name="expires_at" type="date" value="${escapeHtml(defaultExpiry)}"></label>
+              <input type="hidden" name="status" value="active">
+              <input type="hidden" name="mode" value="bilingual">
+              <input type="hidden" name="from_lang" value="zh">
+              <input type="hidden" name="to_lang" value="th">
+              <input type="hidden" name="used_chars" value="0">
+              <label class="wide">备注<input id="quick-create-note" name="notes" placeholder="收款/套餐/客户备注"></label>
+              <div class="form-actions quick-actions"><button type="submit">新增用户</button></div>
+            </div>
+          </form>
+        </div>` : ""}
+      ${!quickUserId ? '<p class="meta">输入 USERID 并点击确定，系统会自动判断是新增用户还是为现有用户充值。</p>' : ""}
+    </section>`;
+}
+
 function renderConversationRows(conversationBindings, token) {
   if (!conversationBindings || conversationBindings.length === 0) {
     return '<p class="meta">暂无群聊或多人聊天室绑定。</p>';
@@ -322,7 +394,7 @@ function renderConversationRows(conversationBindings, token) {
   </div>`;
 }
 
-function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, renewUserNotFound, renewalHistory, searchTerm, conversationSearchTerm, token, message, adminEmail }) {
+function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, renewUserNotFound, renewalHistory, quickUser, quickUserId, quickUserNotFound, searchTerm, conversationSearchTerm, token, message, adminEmail }) {
   const defaultExpiry = addMonthsToDateString(getBangkokDateString(), 1);
 
   return `<!doctype html>
@@ -341,7 +413,7 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
     form { margin: 0; }
     .panel, .user { background: #fff; border: 1px solid #d9e0ea; border-radius: 8px; margin-bottom: 10px; }
     .panel { padding: 16px; }
-    .recharge-panel { scroll-margin-top: 14px; }
+    .recharge-panel, .quick-panel { scroll-margin-top: 14px; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 14px; align-items: start; }
     .create-grid, .edit-grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 12px 14px; align-items: start; }
     .wide { grid-column: span 2; }
@@ -384,6 +456,10 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
     .renew-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
     .renew-card { min-height: 100%; border: 1px solid #e8edf3; border-radius: 8px; padding: 14px; background: #fbfcfe; box-sizing: border-box; }
     .renew-card h3 { margin: 0 0 12px; font-size: 16px; }
+    .quick-body { border-top: 1px solid #e8edf3; margin-top: 14px; padding-top: 14px; display: grid; gap: 14px; }
+    .quick-grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px 14px; align-items: start; }
+    .quick-form { background: #fbfcfe; border: 1px solid #e8edf3; border-radius: 8px; padding: 14px; }
+    .quick-actions { align-self: end; margin-top: 0; }
     .list-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-top: 24px; flex-wrap: wrap; }
     .list-toolbar h2 { margin: 0; }
     .limit-form, .search-form { display: flex; align-items: end; gap: 10px; flex-wrap: nowrap; }
@@ -406,7 +482,7 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
     .history-row { display: grid; grid-template-columns: 90px 90px 130px minmax(180px, 1fr) minmax(160px, 1fr); gap: 10px; padding: 9px 10px; background: #f8fafc; border: 1px solid #e8edf3; border-radius: 6px; font-size: 13px; }
     .conversation-item { background: #fff; border: 1px solid #d9e0ea; border-radius: 8px; }
     @media (max-width: 860px) {
-      .grid, .create-grid, .edit-grid, .renew-grid, .renew-grid.compact, .lookup-form, .metric-grid, .renew-metric-row, .renew-actions, .renew-split, .inline-row, .create-actions, .history-row, .plan-grid { grid-template-columns: 1fr; }
+      .grid, .create-grid, .edit-grid, .renew-grid, .renew-grid.compact, .lookup-form, .metric-grid, .renew-metric-row, .renew-actions, .renew-split, .inline-row, .create-actions, .quick-grid, .history-row, .plan-grid { grid-template-columns: 1fr; }
       .wide { grid-column: span 1; }
       .list-toolbar { align-items: stretch; flex-direction: column; }
       .limit-form, .search-form { align-items: stretch; }
@@ -423,6 +499,7 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
   <header><h1>LINE 翻译机器人管理</h1><p class="meta">当前管理员：${escapeHtml(adminEmail || "unknown")} · <a href="/admin/logout">退出</a></p></header>
   <main>
     ${message ? `<div class="message">${escapeHtml(message)}</div>` : ""}
+    ${renderQuickManagePanel({ quickUser, quickUserId, quickUserNotFound, token })}
     ${renderBillingRules()}
     <section class="panel">
       <h2>新增用户</h2>
@@ -494,34 +571,139 @@ function renderAdminPage({ users, conversationBindings, renewUser, renewUserId, 
       if (next.getDate() !== originalDay) next.setDate(0);
       return formatBangkokDate(next);
     }
-    document.querySelectorAll("[data-expiry-months]").forEach((select) => {
-      select.addEventListener("change", () => {
-        const target = document.getElementById(select.dataset.expiryTarget || "");
-        if (!select.value) return;
-        if (target) target.value = addMonthsToExpiryDate(expiryBaseDate, select.value);
+    function bindExpiryMonthSelects(root = document) {
+      root.querySelectorAll("[data-expiry-months]").forEach((select) => {
+        if (select.dataset.boundExpiry === "true") return;
+        select.dataset.boundExpiry = "true";
+        select.addEventListener("change", () => {
+          const target = document.getElementById(select.dataset.expiryTarget || "");
+          if (!select.value) return;
+          if (target) target.value = addMonthsToExpiryDate(expiryBaseDate, select.value);
+        });
       });
-    });
-    document.querySelectorAll("[data-billing-plan]").forEach((select) => {
-      const applyPlan = () => {
-        const plan = billingPlans.find((item) => item.id === select.value);
-        if (!plan) return;
-        const charsTarget = document.getElementById(select.dataset.charsTarget || "");
-        const monthsTarget = document.getElementById(select.dataset.monthsTarget || "");
-        const expiryTarget = document.getElementById(select.dataset.expiryTarget || "");
-        const noteTarget = document.getElementById(select.dataset.noteTarget || "");
-        if (charsTarget) charsTarget.value = String(plan.chars);
-        if (monthsTarget) monthsTarget.value = String(plan.months);
-        if (expiryTarget) expiryTarget.value = addMonthsToExpiryDate(expiryBaseDate, plan.months);
-        if (noteTarget && !noteTarget.value.trim()) noteTarget.value = plan.label;
-      };
-      select.addEventListener("change", applyPlan);
-      applyPlan();
-    });
-    document.querySelectorAll('input[type="date"]').forEach((input) => {
-      const openPicker = () => { if (typeof input.showPicker === "function") input.showPicker(); };
-      input.addEventListener("click", openPicker);
-      input.addEventListener("focus", openPicker);
-    });
+    }
+    function bindBillingPlanSelects(root = document) {
+      root.querySelectorAll("[data-billing-plan]").forEach((select) => {
+        if (select.dataset.boundBilling === "true") return;
+        select.dataset.boundBilling = "true";
+        const applyPlan = () => {
+          const plan = billingPlans.find((item) => item.id === select.value);
+          if (!plan) return;
+          const charsTarget = document.getElementById(select.dataset.charsTarget || "");
+          const monthsTarget = document.getElementById(select.dataset.monthsTarget || "");
+          const expiryTarget = document.getElementById(select.dataset.expiryTarget || "");
+          const noteTarget = document.getElementById(select.dataset.noteTarget || "");
+          if (charsTarget) charsTarget.value = String(plan.chars);
+          if (monthsTarget) monthsTarget.value = String(plan.months);
+          if (expiryTarget) expiryTarget.value = addMonthsToExpiryDate(expiryBaseDate, plan.months);
+          if (noteTarget && !noteTarget.value.trim()) noteTarget.value = plan.label;
+        };
+        select.addEventListener("change", applyPlan);
+        applyPlan();
+      });
+    }
+    function bindDatePickers(root = document) {
+      root.querySelectorAll('input[type="date"]').forEach((input) => {
+        if (input.dataset.boundPicker === "true") return;
+        input.dataset.boundPicker = "true";
+        const openPicker = () => { if (typeof input.showPicker === "function") input.showPicker(); };
+        input.addEventListener("click", openPicker);
+        input.addEventListener("focus", openPicker);
+      });
+    }
+    function getAdminToken() {
+      return document.querySelector('#quick-manage input[name="token"]')?.value || "";
+    }
+    function setButtonLoading(button, isLoading, loadingText = "处理中") {
+      if (!button) return;
+      if (isLoading) {
+        button.dataset.originalText = button.textContent;
+        button.textContent = loadingText;
+        button.disabled = true;
+      } else {
+        button.textContent = button.dataset.originalText || button.textContent;
+        button.disabled = false;
+      }
+    }
+    async function replaceQuickPanel(lineUserId, message = "", messageType = "success") {
+      const panel = document.getElementById("quick-manage");
+      if (!panel) return;
+      const params = new URLSearchParams();
+      if (lineUserId) params.set("quick_userid", lineUserId);
+      const token = getAdminToken();
+      if (token) params.set("token", token);
+      if (message) params.set("message", message);
+      if (messageType) params.set("message_type", messageType);
+      const response = await fetch("/admin/quick?" + params.toString(), {
+        headers: { "x-quick-manage": "true" },
+        credentials: "same-origin",
+      });
+      if (response.status === 401) throw new Error("需要重新登录");
+      const html = await response.text();
+      panel.outerHTML = html;
+      const nextPanel = document.getElementById("quick-manage");
+      bindAdminEnhancements(nextPanel || document);
+    }
+    function bindQuickManage(root = document) {
+      const panel = root.id === "quick-manage" ? root : root.querySelector?.("#quick-manage");
+      if (!panel || panel.dataset.boundQuick === "true") return;
+      panel.dataset.boundQuick = "true";
+      const lookupForm = panel.querySelector('form[method="get"]');
+      lookupForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = lookupForm.querySelector('button[type="submit"]');
+        const lineUserId = String(new FormData(lookupForm).get("quick_userid") || "").trim();
+        if (!lineUserId) return;
+        setButtonLoading(button, true, "查询中");
+        try {
+          await replaceQuickPanel(lineUserId);
+          history.replaceState(null, "", "#quick-manage");
+        } catch (error) {
+          console.error(error);
+          lookupForm.submit();
+        } finally {
+          setButtonLoading(button, false);
+        }
+      });
+      panel.querySelectorAll('form[method="post"]').forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const button = form.querySelector('button[type="submit"]');
+          setButtonLoading(button, true, "提交中");
+          try {
+            const body = new URLSearchParams(new FormData(form));
+            const response = await fetch(form.action, {
+              method: "POST",
+              headers: {
+                "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+                "accept": "application/json",
+                "x-quick-manage": "true",
+              },
+              body,
+              credentials: "same-origin",
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+              await replaceQuickPanel(result.lineUserId || body.get("quick_userid") || body.get("line_user_id") || "", result.message || "操作失败，请稍后重试。", "error");
+              return;
+            }
+            await replaceQuickPanel(result.lineUserId || body.get("line_user_id") || body.get("quick_userid") || "", result.message || "操作已完成。");
+          } catch (error) {
+            console.error(error);
+            form.submit();
+          } finally {
+            setButtonLoading(button, false);
+          }
+        });
+      });
+    }
+    function bindAdminEnhancements(root = document) {
+      bindExpiryMonthSelects(root);
+      bindBillingPlanSelects(root);
+      bindDatePickers(root);
+      bindQuickManage(root);
+    }
+    bindAdminEnhancements(document);
   </script>
 </body>
 </html>`;
@@ -539,6 +721,7 @@ module.exports = {
   buildAdminRedirect,
   buildAdminRedirectWithOptions,
   buildAdminRedirectWithRenewUser,
+  buildAdminRedirectWithQuickUser,
   renderQuotaOptions,
   renderBillingPlanOptions,
   renderBillingRules,
@@ -552,6 +735,7 @@ module.exports = {
   renderUserRows,
   renderRenewalHistoryRows,
   renderRenewalPanel,
+  renderQuickManagePanel,
   renderConversationRows,
   renderAdminPage,
   redactWebhookBody,
