@@ -22,6 +22,8 @@ const { handleEvent } = require("./bot");
 const { translationCache } = require("./translate");
 const { ADMIN_SESSION_COOKIE, ADMIN_OAUTH_STATE_COOKIE } = require("./config");
 const { applyBillingPlanToBody, buildBillingPlanNote } = require("./billing");
+const { renderHomePage } = require("./homepage");
+const path = require("path");
 
 const app = express();
 
@@ -36,6 +38,16 @@ function sendQuickManageResult(req, res, { ok, message, lineUserId = "" }) {
   }
   return false;
 }
+
+// ── static assets ─────────────────────────────────────────────────────────────
+
+app.use("/pictures", express.static(path.join(__dirname, "..", "pictures")));
+
+// ── homepage ──────────────────────────────────────────────────────────────────
+
+app.get("/", (_req, res) => {
+  res.status(200).send(renderHomePage());
+});
 
 // ── health check ──────────────────────────────────────────────────────────────
 
