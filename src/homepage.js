@@ -193,8 +193,8 @@ function renderHomePage() {
     .screenshots-inner { max-width: 1100px; margin: 0 auto; }
     .screenshot-track-wrapper { overflow: hidden; position: relative; }
     .screenshot-track {
-      display: flex; gap: 16px;
-      animation: scroll-track 32s linear infinite;
+      display: flex; gap: 24px;
+      animation: scroll-track 36s linear infinite;
       width: max-content;
     }
     .screenshot-track:hover { animation-play-state: paused; }
@@ -202,11 +202,15 @@ function renderHomePage() {
       0% { transform: translateX(0); }
       100% { transform: translateX(-50%); }
     }
-    .screenshot-item { flex-shrink: 0; width: 220px; }
+    /* show ~3 larger screenshots in view at once */
+    .screenshot-item { flex-shrink: 0; width: min(340px, 80vw); }
     .screenshot-item img {
-      width: 100%; border-radius: var(--radius);
+      width: 100%; border-radius: 16px;
       border: 1px solid var(--border);
-      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+      box-shadow: 0 6px 20px rgba(0,0,0,.12);
+    }
+    @media (max-width: 600px) {
+      .screenshot-item { width: 78vw; }
     }
 
     /* pricing */
@@ -231,12 +235,24 @@ function renderHomePage() {
 
     /* contact */
     .contact-section { background: #f9fafb; padding: 64px 24px; }
-    .contact-inner { max-width: 700px; margin: 0 auto; text-align: center; }
+    .contact-inner { max-width: 860px; margin: 0 auto; text-align: center; }
     .contact-desc { color: var(--text-muted); margin-bottom: 36px; font-size: 15px; }
-    .qr-grid { display: flex; gap: 40px; justify-content: center; flex-wrap: wrap; }
-    .qr-item { display: flex; flex-direction: column; align-items: center; gap: 12px; }
-    .qr-item img { width: 160px; height: 160px; object-fit: contain; border-radius: var(--radius); border: 1px solid var(--border); padding: 8px; background: #fff; }
-    .qr-label { font-size: 14px; font-weight: 600; color: var(--text-muted); }
+    /* two clearly separated QR cards */
+    .qr-cards { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; }
+    .qr-card {
+      flex: 1 1 320px; max-width: 380px;
+      background: #fff; border: 1px solid var(--border); border-radius: 16px;
+      padding: 32px 24px; display: flex; flex-direction: column; align-items: center; gap: 14px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.05);
+    }
+    .qr-card .qr-title { font-size: 18px; font-weight: 700; }
+    .qr-card .qr-sub { font-size: 13px; color: var(--text-muted); min-height: 38px; }
+    .qr-card img { width: 180px; height: 180px; object-fit: contain; border-radius: var(--radius); border: 1px solid var(--border); padding: 8px; background: #fff; }
+    .qr-card.bot { border-top: 4px solid var(--green); }
+    .qr-card.support { border-top: 4px solid #3b82f6; }
+    .qr-card .qr-tag { font-size: 12px; padding: 3px 12px; border-radius: 14px; font-weight: 600; }
+    .qr-card.bot .qr-tag { background: var(--green-light); color: var(--green-dark); }
+    .qr-card.support .qr-tag { background: #dbeafe; color: #1d4ed8; }
 
     /* footer */
     footer {
@@ -262,10 +278,27 @@ function renderHomePage() {
     <span data-lang="th" style="display:none">LINE บอทแปลภาษา</span>
   </div>
   <div class="nav-links">
-    <a href="#features" data-i18n="nav_features">功能介绍</a>
-    <a href="#pricing" data-i18n="nav_pricing">套餐价格</a>
-    <a href="#contact" data-i18n="nav_contact">联系我们</a>
-    <a href="/admin" class="admin-link" data-i18n="nav_admin">管理员入口</a>
+    <a href="#features">
+      <span data-lang="zh">功能介绍</span>
+      <span data-lang="en" style="display:none">Features</span>
+      <span data-lang="th" style="display:none">ฟีเจอร์</span>
+    </a>
+    <a href="#pricing">
+      <span data-lang="zh">套餐价格</span>
+      <span data-lang="en" style="display:none">Pricing</span>
+      <span data-lang="th" style="display:none">ราคา</span>
+    </a>
+    <a href="#contact">
+      <span data-lang="zh">联系我们</span>
+      <span data-lang="en" style="display:none">Contact</span>
+      <span data-lang="th" style="display:none">ติดต่อ</span>
+    </a>
+    <a href="/payment" class="admin-link">
+      <span data-lang="zh">立即订阅</span>
+      <span data-lang="en" style="display:none">Subscribe</span>
+      <span data-lang="th" style="display:none">สมัคร</span>
+    </a>
+    <a href="/admin" data-i18n="nav_admin">管理员入口</a>
     <div class="lang-switcher">
       <button class="lang-btn active" data-switch="zh">中</button>
       <button class="lang-btn" data-switch="en">EN</button>
@@ -349,10 +382,10 @@ function renderHomePage() {
       <ul>
         ${pricingFeaturesZh}${pricingFeaturesEn}${pricingFeaturesTh}
       </ul>
-      <a href="#contact" class="pricing-cta">
-        <span data-lang="zh">添加机器人开始使用</span>
-        <span data-lang="en" style="display:none">Add the bot to get started</span>
-        <span data-lang="th" style="display:none">เพิ่มบอทเพื่อเริ่มใช้งาน</span>
+      <a href="/payment" class="pricing-cta">
+        <span data-lang="zh">立即订阅</span>
+        <span data-lang="en" style="display:none">Subscribe now</span>
+        <span data-lang="th" style="display:none">สมัครใช้งานเลย</span>
       </a>
     </div>
   </div>
@@ -367,26 +400,46 @@ function renderHomePage() {
       <span data-lang="th" style="display:none">ติดต่อเรา</span>
     </h2>
     <p class="contact-desc">
-      <span data-lang="zh">扫描下方二维码加入服务群，发送您的 USERID 联系管理员开通账号。</span>
-      <span data-lang="en" style="display:none">Scan the QR code below to join our service group, then send your USERID to the administrator to activate your account.</span>
-      <span data-lang="th" style="display:none">สแกน QR code ด้านล่างเพื่อเข้ากลุ่มบริการ จากนั้นส่ง USERID ของคุณให้แอดมินเพื่อเปิดใช้งานบัญชี</span>
+      <span data-lang="zh">第一步：扫码添加翻译机器人。第二步：扫码加入售后服务群，发送您的 USERID 联系管理员开通账号。</span>
+      <span data-lang="en" style="display:none">Step 1: scan to add the translation bot. Step 2: scan to join the support group and send your USERID to the administrator to activate your account.</span>
+      <span data-lang="th" style="display:none">ขั้นตอนที่ 1: สแกนเพื่อเพิ่มบอทแปลภาษา ขั้นตอนที่ 2: สแกนเพื่อเข้ากลุ่มบริการหลังการขาย แล้วส่ง USERID ให้แอดมินเพื่อเปิดใช้งานบัญชี</span>
     </p>
-    <div class="qr-grid">
-      <div class="qr-item">
-        <img src="/pictures/linbot_qrcode.png" alt="LINE Bot QR Code">
-        <div class="qr-label">
+    <div class="qr-cards">
+      <div class="qr-card bot">
+        <span class="qr-tag">
+          <span data-lang="zh">第一步</span>
+          <span data-lang="en" style="display:none">Step 1</span>
+          <span data-lang="th" style="display:none">ขั้นตอนที่ 1</span>
+        </span>
+        <div class="qr-title">
           <span data-lang="zh">添加翻译机器人</span>
           <span data-lang="en" style="display:none">Add Translation Bot</span>
           <span data-lang="th" style="display:none">เพิ่มบอทแปลภาษา</span>
         </div>
-      </div>
-      <div class="qr-item">
-        <img src="/pictures/IMG_8564176DD566-1.jpeg" alt="LINE Service Group QR Code">
-        <div class="qr-label">
-          <span data-lang="zh">加入服务群</span>
-          <span data-lang="en" style="display:none">Join Service Group</span>
-          <span data-lang="th" style="display:none">เข้าร่วมกลุ่มบริการ</span>
+        <div class="qr-sub">
+          <span data-lang="zh">扫码加机器人为好友，把它拉进你的群聊即可开始翻译。</span>
+          <span data-lang="en" style="display:none">Scan to add the bot as a friend, then invite it to your group chat to start translating.</span>
+          <span data-lang="th" style="display:none">สแกนเพื่อเพิ่มบอทเป็นเพื่อน แล้วเชิญเข้ากลุ่มเพื่อเริ่มแปล</span>
         </div>
+        <img src="/pictures/linbot_qrcode.png" alt="LINE Bot QR Code">
+      </div>
+      <div class="qr-card support">
+        <span class="qr-tag">
+          <span data-lang="zh">第二步</span>
+          <span data-lang="en" style="display:none">Step 2</span>
+          <span data-lang="th" style="display:none">ขั้นตอนที่ 2</span>
+        </span>
+        <div class="qr-title">
+          <span data-lang="zh">加入售后服务群</span>
+          <span data-lang="en" style="display:none">Join Support Group</span>
+          <span data-lang="th" style="display:none">เข้ากลุ่มบริการหลังการขาย</span>
+        </div>
+        <div class="qr-sub">
+          <span data-lang="zh">扫码进群，发送你的 USERID 给管理员开通账号、咨询和充值。</span>
+          <span data-lang="en" style="display:none">Scan to join, then send your USERID to the administrator for activation, support, and top-ups.</span>
+          <span data-lang="th" style="display:none">สแกนเพื่อเข้ากลุ่ม แล้วส่ง USERID ให้แอดมินเพื่อเปิดบัญชี สอบถาม และเติมเงิน</span>
+        </div>
+        <img src="/pictures/IMG_8564176DD566-1.jpeg" alt="LINE Service Group QR Code">
       </div>
     </div>
   </div>

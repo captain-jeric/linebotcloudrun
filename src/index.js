@@ -23,6 +23,10 @@ const { translationCache } = require("./translate");
 const { ADMIN_SESSION_COOKIE, ADMIN_OAUTH_STATE_COOKIE } = require("./config");
 const { applyBillingPlanToBody, buildBillingPlanNote } = require("./billing");
 const { renderHomePage } = require("./homepage");
+const { renderPaymentPage, renderPaymentSuccessPage, renderPaymentCancelPage } = require("./payment");
+const {
+  isStripeConfigured, createCheckoutSession, constructWebhookEvent, fulfillCheckoutSession,
+} = require("./stripe");
 const path = require("path");
 
 const app = express();
@@ -47,6 +51,65 @@ app.use("/pictures", express.static(path.join(__dirname, "..", "pictures")));
 
 app.get("/", (_req, res) => {
   res.status(200).send(renderHomePage());
+});
+
+// ── payment pages ─────────────────────────────────────────────────────────────
+// Stripe Checkout (PromptPay + Alipay QR) — checkout session creation is wired
+// once the Stripe API is available; pages below are the UI scaffold.
+
+app.get("/payment", (_req, res) => {
+  res.status(200).send(renderPaymentPage({ enabled: isStripeConfigured() }));
+});
+
+app.get("/payment/success", (_req, res) => {
+  res.status(200).send(renderPaymentSuccessPage());
+});
+
+app.get("/payment/cancel", (_req, res) => {
+  res.status(200).send(renderPaymentCancelPage());
+});
+
+// Creates a Stripe Checkout Session (PromptPay/Alipay) and redirects the user to
+// Stripe's hosted QR page. Falls back to /payment if Stripe is not configured.
+app.post("/payment/checkout", express.urlencoded({ extended: false }), async (req, res) => {
+  if (!isStripeConfigured()) {
+    res.redirect("/payment");
+    return;
+  }
+  try {
+    const lineUserId = String(req.body.line_user_id || "").trim();
+    const session = await createCheckoutSession(req, { lineUserId });
+    res.redirect(303, session.url);
+  } catch (error) {
+    console.error("Create Stripe checkout session failed:", error);
+    res.redirect("/payment");
+  }
+});
+
+// Stripe webhook — verifies signature against the raw body, then fulfills the
+// order (tops up the user's quota) on checkout.session.completed.
+app.post("/payment/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  if (!isStripeConfigured()) {
+    res.status(503).end();
+    return;
+  }
+  let event;
+  try {
+    event = constructWebhookEvent(req.body, req.get("stripe-signature"));
+  } catch (error) {
+    console.error("Stripe webhook signature verification failed:", error.message);
+    res.status(400).send(`Webhook Error: ${error.message}`);
+    return;
+  }
+  try {
+    if (event.type === "checkout.session.completed") {
+      await fulfillCheckoutSession(event.data.object);
+    }
+    res.status(200).json({ received: true });
+  } catch (error) {
+    console.error("Stripe webhook handling failed:", error);
+    res.status(500).end();
+  }
 });
 
 // ── health check ──────────────────────────────────────────────────────────────
